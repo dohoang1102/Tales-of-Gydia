@@ -144,6 +144,17 @@ class unit: public content{
 	public:
 	int x, y;//Unit position
 	animSet anims;//Unit animations
+	
+	//Constructor
+	unit(){
+		x = 0;
+		y = 0;
+	}
+	
+	//Function to print unit
+	void print(SDL_Surface* target, int x, int y){
+		
+	}
 };
 
 //Map class
