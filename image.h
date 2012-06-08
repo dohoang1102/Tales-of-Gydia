@@ -82,15 +82,20 @@ class image{
 	SDL_Surface* img;//Surface of the image
 	SDL_Rect rect;//Portion of the image to print
 	
+	int cShiftX, cShiftY;//Shift the center (reference when printing)
+	
 	//Constructor
 	image(){
 		img = NULL;
 		rect = {0,0,0,0};
+		
+		cShiftX = 0;
+		cShiftY = 0;
 	}
 
 	//Function that prints the image (coordinates refer to the center)
 	void print(SDL_Surface* target, int x, int y){
-		SDL_Rect o {x - rect.w / 2, y - rect.h / 2};//Offset rectangle
+		SDL_Rect o {x - rect.w / 2 + cShiftX, y - rect.h / 2 + cShiftY};//Offset rectangle
 		SDL_BlitSurface(img, &rect, target, &o);//Blits the image on the target surface
 	}
 	
@@ -106,6 +111,7 @@ class image{
 			if (o.type == OBJTYPE_IMAGE){//If the object type is matching
 				var* fileName = o.getVar("image");//Image file variable
 				object* rect = o.getObj("rect");//Rectangle object
+				var* cShiftX = o.getVar("cShiftX"), *cShiftY = o.getVar("cShiftY");//Centre shifting on two axes
 				
 				id = o.name;//The id is the name of the object
 				
@@ -118,6 +124,10 @@ class image{
 				}
 				
 				if (rect) this->rect = objToRect(*rect);//Loads rectangle
+				
+				//Reads centre shifting
+				if (cShiftX) this->cShiftX = cShiftX->intValue();
+				if (cShiftY) this->cShiftY = cShiftY->intValue();
 			}
 			
 			#ifdef _ERROR

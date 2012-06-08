@@ -28,9 +28,25 @@ int MAP_WARNING 			= getErrorCode();//Generic map warning
 int DB_VARIABLEWARNING		= getErrorCode();//Non-lethal variable error in database object
 
 #define OBJTYPE_TERRAIN		"terrain"//Object type terrain
+#define OBJTYPE_UNIT		"unit"//Object type unit
 #define OBJTYPE_MAP			"map"//Object type map
 
-#define SELCOLOR			0xFFFFFF7A
+#define CONTROLLER_KEYBOARD	0//Controller mode keyboard
+#define CONTROLLER_JOYSTICK	1//Controller mode joystick
+#define CONTROLLER_AI		2//Controller mode AI
+
+#define NORTH				0//North direction
+#define EAST				1//East direction
+#define SOUTH				2//South direction
+#define WEST				3//West direction
+
+#define CMD_IDLE			0//Idle command
+
+#define CMD_MOVE			0x10//Generic move command
+#define CMD_MOVE_N			0x10//Move north command
+#define CMD_MOVE_E			0x11//Move east command
+#define CMD_MOVE_S			0x12//Move south command
+#define CMD_MOVE_W			0x13//Move west command
 
 //Content base class
 class content{
@@ -142,18 +158,108 @@ list <terrain> terrainDb;//Terrains database
 //Unit class
 class unit: public content{
 	public:
+	string name;//Unit name
 	int x, y;//Unit position
+	int speed;//Unit walking speed
+	int direction;//Current direction
 	animSet anims;//Unit animations
 	
 	//Constructor
 	unit(){
 		x = 0;
 		y = 0;
+		speed = 5;
+		direction = SOUTH;
 	}
 	
 	//Function to print unit
 	void print(SDL_Surface* target, int x, int y){
+		anims.print(target, x, y);//Prints animation
+	}
+	
+	//Function to load from script object
+	void fromScriptObj(object o){
+		if (o.type == OBJTYPE_UNIT){//If object type is matching
+			content::fromScriptObj(o);//Loads base content data
+			
+			object* anims = o.getObj("anims");//Animations
+			if (anims) this->anims.fromScriptObj(*anims);//Loads animations
+			
+			this->anims.setAnim("idle_s");//Sets animation
+		}
+	}
+	
+	//Function to move unit
+	void walk(int direction){
+		this->direction = direction;//Sets direction
 		
+		switch (direction){
+			case NORTH:
+			anims.setAnim("walk_n");//Sets animation
+			y -= speed;//Moves north
+			break;
+			
+			case EAST:
+			anims.setAnim("walk_e");//Sets animation
+			x += speed;//Moves east
+			break;
+			
+			case SOUTH:
+			anims.setAnim("walk_s");//Sets animation
+			y += speed;//Moves south
+			break;
+			
+			case WEST:
+			anims.setAnim("walk_w");//Sets animation
+			x -= speed;//Moves west
+			
+			default:
+			anims.setAnim("idle_s");//Sets default animation if wrong direction was given
+		}
+	}
+	
+	//Function to stop unit (sets idle animation)
+	void stop(){
+		switch (direction){
+			case NORTH: anims.setAnim("idle_n"); break;
+			case EAST: anims.setAnim("idle_e"); break;
+			case SOUTH: anims.setAnim("idle_s"); break;
+			case WEST: anims.setAnim("idle_w"); break;
+		}
+	}
+	
+	//Function to receive and execute orders
+	void execOrder(int order, string args){
+		if (order == CMD_IDLE) stop();//Idle command - stops unit
+		else if ((order & 0xF0) == CMD_MOVE) walk(order & 0xF);//Move command - moves unit
+		else stop();//Stops unit on any other command
+	}
+};
+
+list <unit> unitDb;//Units database
+
+//Class controller
+class controller{
+	public:
+	int mode;//Controller mode (KEYBOARD, JOYSTICK, AI)
+	list<unit*> u;//Units controlled by this controller
+	
+	//Constructor
+	controller(){
+		mode = CONTROLLER_KEYBOARD;
+	}
+	
+	//Function to add unit to controller
+	void addUnit(unit* un){
+		u.push_back(un);//Adds unit to controlled units
+	}
+	
+	//Function that gives order to all units linked to this controller
+	void giveOrder(int order, string args){
+		list<unit*>::iterator i;//Iterator
+		
+		for (i = u.begin(); i != u.end(); i++)//For each unit
+			(*i)->execOrder(order, args);//Gives order to unit
 	}
 };
 
@@ -167,8 +273,8 @@ class map: public content{
 	
 	SDL_Surface* pict;//Picture of the map
 	SDL_Surface* mmap;//Picture of the minimap
-	
-	unsigned int selX, selY;//Selected tile (-1 to deselect)
+		
+	list <unit> units;//Units of the map
 	
 	//Constructor
 	map(){
@@ -181,9 +287,6 @@ class map: public content{
 		mmap = NULL;
 		
 		resize(1,1);
-				
-		selX = -1;
-		selY = -1;
 	}
 	
 	//Function to resize the map
@@ -214,7 +317,7 @@ class map: public content{
 	int height() {return h;}
 	
 	//Function to print the map
-	void _print(SDL_Surface* target, int x, int y){
+	void _print(SDL_Surface* target, int x, int y, bool grid = false, int gridCol = 0x00000045){
 		//Offset position
 		int x0 = x - (w - 1) * tilesSide / 2;
 		int y0 = y - (h - 1) * tilesSide / 2;
@@ -351,12 +454,20 @@ class map: public content{
 			}
 			
 			curLayer++;//Next layer
-		}	
+		}
+		
+		//If grid is required
+		if (grid){
+			int i;//Counter
+			
+			for (i = 0; i < w; i++) lineColor(target, x0 + i * tilesSide - tilesSide / 2, y0 - tilesSide / 2, x0 + i * tilesSide - tilesSide / 2, y0 + h * tilesSide - tilesSide / 2, gridCol);//Prints vertical lines
+			for (i = 0; i < h; i++) lineColor(target, x0 - tilesSide / 2, y0 + i * tilesSide - tilesSide / 2, x0 + w * tilesSide - tilesSide / 2, y0 + i * tilesSide - tilesSide / 2, gridCol);//Prints horizontal lines
+		}
 	}
 	
 	//Function to make picture of the map
 	void makePict(){
-		_print(pict, pict->w / 2, pict->h / 2);//Prints map on picture
+		_print(pict, pict->w / 2, pict->h / 2, true);//Prints map on picture
 	}
 	
 	//Function to make minimap
@@ -373,13 +484,14 @@ class map: public content{
 	
 	//Function to print picture of the map
 	void print(SDL_Surface* target, int x, int y){
+		//Prints base
 		SDL_Rect offset = {x - pict->w / 2, y - pict->h / 2};//Offset rectangle
 		SDL_BlitSurface(pict, NULL, target, &offset);//Prints picture
-		
-		if (selX != -1 && selY != -1 && selX < w && selY < h){//If there's valid selected tile
-			rectangleColor(target, selX * tilesSide, selY * tilesSide, (selX + 1) * tilesSide, (selY + 1) * tilesSide, SELCOLOR);
-			rectangleColor(target, selX * tilesSide + 1, selY * tilesSide + 1, (selX + 1) * tilesSide - 1, (selY + 1) * tilesSide - 1, SELCOLOR);
-			boxColor(target, selX * tilesSide, selY * tilesSide, (selX + 1) * tilesSide, (selY + 1) * tilesSide, (SELCOLOR & 0xFFFFFF00) + (SELCOLOR & 0xFF) / 2);
+			
+		//Prints units
+		list<unit>::iterator u;//Unit iterator
+		for (u = units.begin(); u != units.end(); u++){//For each unit in map
+			u->print(target, offset.x + u->x, offset.y + u->y);//Prints unit
 		}
 	}
 	
@@ -407,6 +519,26 @@ class map: public content{
 		}
 		
 		//No need to call error function here, it is called by the get function (see gameHeaders.h)
+	}
+		
+	//Function to create new unit
+	unit* createUnit(string id, string name, int x, int y){
+		unit* u = get(&unitDb, id);//Gets unit
+		
+		if (u){//If unit exists
+			unit newUnit = *u;//New unit
+			
+			newUnit.name = name;
+			newUnit.x = x;
+			newUnit.y = y;
+			
+			units.push_back(newUnit);//Adds new unit
+			
+			return &units.back();//Returns pointer to last unit
+		}
+		else if (errFunc) errFunc(DB_VARIABLEWARNING, "Unit " + id + " not found");
+		
+		return NULL;//Returns null if couldn't add unit
 	}
 	
 	#ifdef _SCRIPT
@@ -481,6 +613,12 @@ void loadDatabase(object o){
 			map newMap;//New map
 			newMap.fromScriptObj(*i);//Loads map
 			mapDb.push_back(newMap);//Adds map to database
+		}
+		
+		if (i->type == OBJTYPE_UNIT){//If object is an unit
+			unit newUnit;//New unit
+			newUnit.fromScriptObj(*i);//Loads unit
+			unitDb.push_back(newUnit);//Adds unit to database
 		}
 	}
 }
