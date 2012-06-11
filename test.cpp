@@ -7,9 +7,12 @@ int main(int argc, char* argv[]){
 	bool running = true;
 	SDL_Event e;
 	
-	game_init("data\\cfg\\db.cfg", "testMap");
-	unit* u = activeMap.createUnit("baseMale", "Buch", 160, 160);
+	game_init("data\\cfg\\db.cfg", "data\\cfg\\settings.cfg", "testMap");
+	unit* u = activeMap.createUnit("baseMale", "Buch", 40, 40);
+	controller c;
+	c.addUnit(u);
 		
+	activeMap.makeTmap();
 	while (running){
 		while (SDL_PollEvent(&e)){
 			if (e.type == SDL_QUIT) running = false;
@@ -17,12 +20,14 @@ int main(int argc, char* argv[]){
 		}
 		
 		SDL_FillRect(window, &window->clip_rect, 0);
-		u->execOrder(CMD_MOVE_S, "");
-		u->anims.next();
+		c.getInput();
+		activeMap.animate();
+		activeMap._time();
 		activeMap.print(window, window->w / 2, window->h / 2);
+		SDL_BlitSurface(activeMap.mmap, NULL, window, NULL);
 		SDL_Flip(window);
 		
-		SDL_Delay(50);
+		SDL_Delay(40);
 	}
 	
 	return 0;

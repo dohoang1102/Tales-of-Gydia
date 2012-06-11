@@ -31,9 +31,8 @@ int DB_VARIABLEWARNING		= getErrorCode();//Non-lethal variable error in database
 #define OBJTYPE_UNIT		"unit"//Object type unit
 #define OBJTYPE_MAP			"map"//Object type map
 
-#define CONTROLLER_KEYBOARD	0//Controller mode keyboard
-#define CONTROLLER_JOYSTICK	1//Controller mode joystick
-#define CONTROLLER_AI		2//Controller mode AI
+#define CONTROLLER_HUMAN	0//Controller mode human (keyboard + mouse)
+#define CONTROLLER_AI		1//Controller mode AI
 
 #define NORTH				0//North direction
 #define EAST				1//East direction
@@ -47,6 +46,16 @@ int DB_VARIABLEWARNING		= getErrorCode();//Non-lethal variable error in database
 #define CMD_MOVE_E			0x11//Move east command
 #define CMD_MOVE_S			0x12//Move south command
 #define CMD_MOVE_W			0x13//Move west command
+
+#define CMD_SAY				0x20//Say command
+
+#define SPEAKTIME			2500//Speaking time
+
+class map;//Map class prototype
+
+typedef struct {int code; string args;} order;//Order structure
+
+TTF_Font* globalFont = NULL;//Global font
 
 //Content base class
 class content{
@@ -93,6 +102,7 @@ class terrain: public content{
 	list<image> transitions;
 	image baseImage;//Base image of the terrain
 	int layer;//Layer of the terrain (transitions are printed only above lower layers)
+	bool free;//Flag indicating if player can walk on terrain
 	Uint32 mmapColor;//Color in minimap
 	
 	//Constructor
@@ -101,6 +111,7 @@ class terrain: public content{
 		author = "";
 		description = "";
 		layer = 0;
+		free = true;
 		mmapColor = 0;
 	}
 	
@@ -142,7 +153,10 @@ class terrain: public content{
 					}
 				}
 				
+				var* free = o.getVar("free");//Free variable
 				var* mmapColor = o.getVar("mmapColor");//Minimap color variable
+				
+				if (free) this->free = free->intValue();//Gets free flag
 				if (mmapColor) this->mmapColor = strtol(mmapColor->value.c_str(), NULL, 0);//Gets minimap color
 			}
 			
@@ -161,8 +175,14 @@ class unit: public content{
 	string name;//Unit name
 	int x, y;//Unit position
 	int speed;//Unit walking speed
+	int margin;//Unit margin (minimum distance from limits)
 	int direction;//Current direction
 	animSet anims;//Unit animations
+	
+	map *parent;//Parent map
+	
+	string saying;//Words said by the unit
+	unsigned int sayStart;//Time of speaking command
 	
 	//Constructor
 	unit(){
@@ -170,11 +190,27 @@ class unit: public content{
 		y = 0;
 		speed = 5;
 		direction = SOUTH;
+		parent = NULL;
 	}
 	
 	//Function to print unit
 	void print(SDL_Surface* target, int x, int y){
 		anims.print(target, x, y);//Prints animation
+		
+		if (saying != "" && globalFont){//If unit is saying something and there's a valid font
+			SDL_Surface* text = TTF_RenderText_Solid(globalFont, saying.c_str(), SDL_Color {30,30,30});//Text surface
+			
+			roundedBoxColor(target, x - text->w / 2 - 5, y - 1.5 * tilesSide - text->h - 5, x + text->w / 2, y - 1.5 * tilesSide, 5, 0xFFFFFFD0);//Fills balloon
+			
+			Sint16 px [] = {x - 3, x + 3, x};
+			Sint16 py [] = {y - 1.5 * tilesSide + 1, y - 1.5 * tilesSide + 1, y - 1.3 * tilesSide};
+			filledPolygonColor(target, px, py, 3, 0xFFFFFFD0);
+			
+			SDL_Rect offset = {x - text->w / 2, y - 1.5 * tilesSide - text->h};//Offset rectangle
+			SDL_BlitSurface(text, NULL, target, &offset);//Prints text
+			
+			SDL_FreeSurface(text);//Frees text
+		}
 	}
 	
 	//Function to load from script object
@@ -183,40 +219,19 @@ class unit: public content{
 			content::fromScriptObj(o);//Loads base content data
 			
 			object* anims = o.getObj("anims");//Animations
+			var* speed = o.getVar("speed");//Speed variable
+			var* margin = o.getVar("margin");//Margin variable
+			
 			if (anims) this->anims.fromScriptObj(*anims);//Loads animations
+			if (speed) this->speed = speed->intValue();//Gets speed
+			if (margin) this->margin = margin->intValue();//Gets margin
 			
 			this->anims.setAnim("idle_s");//Sets animation
 		}
 	}
 	
 	//Function to move unit
-	void walk(int direction){
-		this->direction = direction;//Sets direction
-		
-		switch (direction){
-			case NORTH:
-			anims.setAnim("walk_n");//Sets animation
-			y -= speed;//Moves north
-			break;
-			
-			case EAST:
-			anims.setAnim("walk_e");//Sets animation
-			x += speed;//Moves east
-			break;
-			
-			case SOUTH:
-			anims.setAnim("walk_s");//Sets animation
-			y += speed;//Moves south
-			break;
-			
-			case WEST:
-			anims.setAnim("walk_w");//Sets animation
-			x -= speed;//Moves west
-			
-			default:
-			anims.setAnim("idle_s");//Sets default animation if wrong direction was given
-		}
-	}
+	void walk(int direction);
 	
 	//Function to stop unit (sets idle animation)
 	void stop(){
@@ -228,11 +243,23 @@ class unit: public content{
 		}
 	}
 	
+	//Function to speak
+	void say (string text){
+		sayStart = SDL_GetTicks();//Saves time
+		saying = text;//Sets text
+	}
+	
 	//Function to receive and execute orders
-	void execOrder(int order, string args){
-		if (order == CMD_IDLE) stop();//Idle command - stops unit
-		else if ((order & 0xF0) == CMD_MOVE) walk(order & 0xF);//Move command - moves unit
+	void execOrder(order o){
+		if (o.code == CMD_IDLE) stop();//Idle command - stops unit
+		else if ((o.code & 0xF0) == CMD_MOVE) walk(o.code & 0xF);//Move command - moves unit
+		else if (o.code == CMD_SAY) say(o.args);//Say command
 		else stop();//Stops unit on any other command
+	}
+	
+	//Function executing everything connected to timelapse
+	void _time(){
+		if (SDL_GetTicks() - sayStart >= SPEAKTIME) saying = "";//Clears words said by unit
 	}
 };
 
@@ -246,7 +273,7 @@ class controller{
 	
 	//Constructor
 	controller(){
-		mode = CONTROLLER_KEYBOARD;
+		mode = CONTROLLER_HUMAN;
 	}
 	
 	//Function to add unit to controller
@@ -255,11 +282,25 @@ class controller{
 	}
 	
 	//Function that gives order to all units linked to this controller
-	void giveOrder(int order, string args){
+	void giveOrder(order o){
 		list<unit*>::iterator i;//Iterator
 		
 		for (i = u.begin(); i != u.end(); i++)//For each unit
-			(*i)->execOrder(order, args);//Gives order to unit
+			(*i)->execOrder(o);//Gives order to unit
+	}
+	
+	//Function that gets input from keyboard-mouse
+	void getInput(){
+		if (mode != CONTROLLER_HUMAN) return;//Exits function if controller is not human
+		
+		Uint8* keys = SDL_GetKeyState(NULL);//Gets keys
+		
+		//Walking orders
+		if (keys[SDLK_UP]) giveOrder({CMD_MOVE_N, ""});
+		else if (keys[SDLK_RIGHT]) giveOrder({CMD_MOVE_E, ""});
+		else if (keys[SDLK_DOWN]) giveOrder({CMD_MOVE_S, ""});
+		else if (keys[SDLK_LEFT]) giveOrder({CMD_MOVE_W, ""});
+		else giveOrder({CMD_IDLE, ""});
 	}
 };
 
@@ -273,6 +314,7 @@ class map: public content{
 	
 	SDL_Surface* pict;//Picture of the map
 	SDL_Surface* mmap;//Picture of the minimap
+	SDL_Surface* tmap;//Picture of the transitions mask
 		
 	list <unit> units;//Units of the map
 	
@@ -309,6 +351,7 @@ class map: public content{
 		
 		pict = SDL_CreateRGBSurface(SDL_SWSURFACE, w * tilesSide, h * tilesSide, 32, 0, 0, 0, 0);//Creates picture
 		mmap = SDL_CreateRGBSurface(SDL_SWSURFACE, w * 4, h * 4, 32, 0, 0, 0, 0);//Creates minimap
+		tmap = SDL_CreateRGBSurface(SDL_SWSURFACE, w * tilesSide, h * tilesSide, 32, 0, 0, 0, 0);//Creates transitions map
 	}
 	
 	//Function to get map width
@@ -465,6 +508,188 @@ class map: public content{
 		}
 	}
 	
+	//Function to print transition mask
+	void _printT(SDL_Surface* target, int x, int y, int col = 0x0000007A, int back = 0xFFFFFFFF){
+		SDL_FillRect(target, &target->clip_rect, back);//Prints background
+		
+		//Offset position
+		int x0 = x - (w) * tilesSide / 2;
+		int y0 = y - (h) * tilesSide / 2;
+		
+		int i, j;//Counters
+		
+		int curLayer = 0;//Layer currently being printed
+		int printedTiles = 0;//Tiles totally printed
+		
+		for (i = 0; i < h; i++){//For each row
+			for (j = 0; j < w; j++){//For each column
+				if (!tiles[i * w + j].free) boxColor(target, j * tilesSide, i * tilesSide, (j + 1) * tilesSide, (i + 1) * tilesSide, col);
+			}
+		}
+		
+		while (printedTiles < w * h){//Until all the tile transitions have been printed
+			//Prints transitions
+			for (i = 0; i < h; i++){//For each row
+				for (j = 0; j < w; j++){//For each column
+					if (tiles[i * w + j].layer != curLayer) continue;//Next tile if layer is not matching
+					else printedTiles++;//Else tile has been printed
+					
+					if (tiles[i * w + j].free) continue;//Next tile if layer is free
+					
+					if (j > 0){//If not in the first column
+						//Checks if left transition is needed
+						if ((i == 0 || tiles[(i - 1) * w + j - 1].id != tiles[i * w + j].id) &&
+							tiles[i * w + j - 1].id != tiles[i * w + j].id &&
+							(i == h - 1 || tiles[(i + 1) * w + j - 1].id != tiles[i * w + j].id) &&
+							tiles[i * w + j].layer > tiles[i * w + j - 1].layer &&
+							tiles[i * w + j].getTransition("t_0101")){
+							Sint16 px [] = {x0 + (j - 1) * tilesSide + tilesSide / 2, x0 + (j - 1) * tilesSide + tilesSide / 2, x0 + (j) * tilesSide, x0 + (j) * tilesSide};
+							Sint16 py [] = {y0 + i * tilesSide, y0 + (i + 1) * tilesSide, y0 + (i + 1) * tilesSide, y0 + i * tilesSide};
+							filledPolygonColor(target, px, py, 4, col);
+						}	
+					}
+					
+					if (j > 0 && i > 0){//If not in the first row or column
+						//Checks if up-left transition is needed
+						if (tiles[(i - 1) * w + j - 1].id != tiles[i * w + j].id &&
+							tiles[(i - 1) * w + j].id != tiles[i * w + j].id &&
+							tiles[i * w + j - 1].id != tiles[i * w + j].id &&
+							tiles[i * w + j].layer > tiles[(i - 1) * w + j - 1].layer &&
+							tiles[i * w + j].getTransition("t_0001")){
+							Sint16 px [] = {x0 + (j - 1) * tilesSide + tilesSide / 2, x0 + j * tilesSide, x0 + j * tilesSide};
+							Sint16 py [] = {y0 + i * tilesSide, y0 + (i - 1) * tilesSide + tilesSide / 2, y0 + i * tilesSide};
+							filledPolygonColor(target, px, py, 3, col);
+							}
+							
+						//Checks if up-left concave transition is needed
+						if (tiles[(i - 1) * w + j - 1].id != tiles[i * w + j].id &&
+							tiles[(i - 1) * w + j].id == tiles[i * w + j].id &&
+							tiles[i * w + j - 1].id == tiles[i * w + j].id &&
+							tiles[i * w + j].layer > tiles[(i - 1) * w + j - 1].layer &&
+							tiles[i * w + j].getTransition("t_0111")){
+							Sint16 px [] = {x0 + (j - 1) * tilesSide, x0 + (j - 1) * tilesSide + tilesSide / 2, x0 + j * tilesSide, x0 + j * tilesSide, x0 + (j - 1) * tilesSide};
+							Sint16 py [] = {y0 + (i - 1) * tilesSide + tilesSide / 2, y0 + (i - 1) * tilesSide, y0 + (i - 1) * tilesSide, y0 + i * tilesSide, y0 + i * tilesSide};
+							filledPolygonColor(target, px, py, 5, col);
+						}
+					}
+					
+					if (i > 0){//If not in the first row
+						//Checks if up transition is needed
+						if ((j == 0 || tiles[(i - 1) * w + (j - 1)].id != tiles[i * w + j].id) &&
+							tiles[(i - 1) * w + j].id != tiles[i * w + j].id &&
+							(j == w - 1 || tiles[(i - 1) * w + (j + 1)].id != tiles[i * w + j].id) &&
+							tiles[i * w + j].layer > tiles[(i - 1) * w + j].layer &&
+							tiles[i * w + j].getTransition("t_0011")){
+							Sint16 px [] = {x0 + j * tilesSide, x0 + (j + 1) * tilesSide, x0 + (j + 1) * tilesSide, x0 + j * tilesSide};
+							Sint16 py [] = {y0 + (i - 1) * tilesSide + tilesSide / 2, y0 + (i - 1) * tilesSide + tilesSide / 2, y0 + i * tilesSide, y0 + i * tilesSide};
+							filledPolygonColor(target, px, py, 4, col);
+						}
+					}
+					
+					if (i > 0 && j < w - 1){//If not in the first row or last column
+						//Checks if up-right transition is needed
+						if (tiles[(i - 1) * w + j + 1].id != tiles[i * w + j].id &&
+							tiles[(i - 1) * w + j].id != tiles[i * w + j].id &&
+							tiles[i * w + j + 1].id != tiles[i * w + j].id &&
+							tiles[i * w + j].layer > tiles[(i - 1) * w + j + 1].layer &&
+							tiles[i * w + j].getTransition("t_0010")){
+							Sint16 px [] = {x0 + (j + 1) * tilesSide, x0 + (j + 1) * tilesSide + tilesSide / 2, x0 + (j + 1) * tilesSide};
+							Sint16 py [] = {y0 + (i - 1) * tilesSide + tilesSide / 2, y0 + i * tilesSide, y0 + i * tilesSide};
+							filledPolygonColor(target, px, py, 3, col);
+						}
+							
+						//Checks if up-right concave transition is needed
+						if (tiles[(i - 1) * w + j + 1].id != tiles[i * w + j].id &&
+							tiles[(i - 1) * w + j].id == tiles[i * w + j].id &&
+							tiles[i * w + j + 1].id == tiles[i * w + j].id &&
+							tiles[i * w + j].layer > tiles[(i - 1) * w + j + 1].layer &&
+							tiles[i * w + j].getTransition("t_1011")){
+							Sint16 px [] = {x0 + (j + 1) * tilesSide, x0 + (j + 1) * tilesSide + tilesSide / 2, x0 + (j + 2) * tilesSide, x0 + (j + 2) * tilesSide, x0 + (j + 1) * tilesSide};
+							Sint16 py [] = {y0 + (i - 1) * tilesSide, y0 + (i - 1) * tilesSide, y0 + (i - 1) * tilesSide + tilesSide / 2, y0 + i * tilesSide, y0 + i * tilesSide};
+							filledPolygonColor(target, px, py, 5, col);
+						}
+					}
+					
+					if (j < w - 1){//If not in the last column
+						//Checks if right transition is needed
+						if ((i == 0 || tiles[(i - 1) * w + j + 1].id != tiles[i * w + j].id) &&
+							tiles[i * w + j + 1].id != tiles[i * w + j].id &&
+							(i == h - 1 || tiles[(i + 1) * w + j + 1].id != tiles[i * w + j].id) &&
+							tiles[i * w + j].layer > tiles[i * w + j + 1].layer &&
+							tiles[i * w + j].getTransition("t_1010")){
+							Sint16 px [] = {x0 + (j + 1) * tilesSide, x0 + (j + 1) * tilesSide + tilesSide / 2, x0 + (j + 1) * tilesSide + tilesSide / 2, x0 + (j + 1) * tilesSide};
+							Sint16 py [] = {y0 + i * tilesSide, y0 + i * tilesSide, y0 + (i + 1) * tilesSide, y0 + (i + 1) * tilesSide};
+							filledPolygonColor(target, px, py, 4, col);
+						}
+					}
+					
+					if (i < h - 1 && j < w - 1){//If not in the last row or column
+						//Checks if down-right transition is needed
+						if (tiles[(i + 1) * w + j + 1].id != tiles[i * w + j].id &&
+							tiles[(i + 1) * w + j].id != tiles[i * w + j].id &&
+							tiles[i * w + j + 1].id != tiles[i * w + j].id &&
+							tiles[i * w + j].layer > tiles[(i + 1) * w + j + 1].layer &&
+							tiles[i * w + j].getTransition("t_1000")){
+							Sint16 px [] = {x0 + (j + 1) * tilesSide, x0 + (j + 1) * tilesSide + tilesSide / 2, x0 + (j + 1) * tilesSide};
+							Sint16 py [] = {y0 + (i + 1) * tilesSide, y0 + (i + 1) * tilesSide, y0 + (i + 1) * tilesSide + tilesSide / 2};
+							filledPolygonColor(target, px, py, 3, col);
+						}
+						
+						//Checks if down-right concave transition is needed
+						if (tiles[(i + 1) * w + j + 1].id != tiles[i * w + j].id &&
+							tiles[(i + 1) * w + j].id == tiles[i * w + j].id &&
+							tiles[i * w + j + 1].id == tiles[i * w + j].id &&
+							tiles[i * w + j].layer > tiles[(i + 1) * w + j + 1].layer &&
+							tiles[i * w + j].getTransition("t_1110")){
+							Sint16 px [] = {x0 + (j + 1) * tilesSide, x0 + (j + 2) * tilesSide, x0 + (j + 2) * tilesSide, x0 + (j + 1) * tilesSide + tilesSide / 2, x0 + (j + 1) * tilesSide};
+							Sint16 py [] = {y0 + (i + 1) * tilesSide, y0 + (i + 1) * tilesSide, y0 + (i + 1) * tilesSide + tilesSide / 2, y0 + (i + 2) * tilesSide, y0 + (i + 2) * tilesSide};
+							filledPolygonColor(target, px, py, 5, col);
+						}
+					}
+					
+					if (i < h - 1){//If not in the last row
+						//Checks if down transition is needed
+						if ((j == 0 || tiles[(i + 1) * w + (j - 1)].id != tiles[i * w + j].id) &&
+							tiles[(i + 1) * w + j].id != tiles[i * w + j].id &&
+							(j == w - 1 || tiles[(i + 1) * w + (j + 1)].id != tiles[i * w + j].id) &&
+							tiles[i * w + j].layer > tiles[(i + 1) * w + j].layer &&
+							tiles[i * w + j].getTransition("t_1100")){
+							Sint16 px [] = {x0 + j * tilesSide, x0 + (j + 1) * tilesSide, x0 + (j + 1) * tilesSide, x0 + j * tilesSide};
+							Sint16 py [] = {y0 + (i + 1) * tilesSide, y0 + (i + 1) * tilesSide, y0 + (i + 1) * tilesSide + tilesSide / 2, y0 + (i + 1) * tilesSide + tilesSide / 2};
+							filledPolygonColor(target, px, py, 4, col);
+						}
+					}
+					
+					if (i < h - 1 && j > 0){//If not in the last row or first column
+						//Checks if down-left transition is needed
+						if (tiles[(i + 1) * w + j - 1].id != tiles[i * w + j].id &&
+							tiles[(i + 1) * w + j].id != tiles[i * w + j].id &&
+							tiles[i * w + j - 1].id != tiles[i * w + j].id &&
+							tiles[i * w + j].layer > tiles[(i + 1) * w + j - 1].layer &&
+							tiles[i * w + j].getTransition("t_0100")){
+							Sint16 px [] = {x0 + (j - 1) * tilesSide + tilesSide / 2, x0 + j * tilesSide, x0 + j * tilesSide};
+							Sint16 py [] = {y0 + (i + 1) * tilesSide, y0 + (i + 1) * tilesSide, y0 + (i + 1) * tilesSide + tilesSide / 2};
+							filledPolygonColor(target, px, py, 3, col);
+						}
+							
+						//Checks if down-left concave transition is needed
+						if (tiles[(i + 1) * w + j - 1].id != tiles[i * w + j].id &&
+							tiles[(i + 1) * w + j].id == tiles[i * w + j].id &&
+							tiles[i * w + j - 1].id == tiles[i * w + j].id &&
+							tiles[i * w + j].layer > tiles[(i + 1) * w + j - 1].layer &&
+							tiles[i * w + j].getTransition("t_1101")){
+							Sint16 px [] = {x0 + (j - 1) * tilesSide, x0 + j * tilesSide, x0 + j * tilesSide, x0 + (j - 1) * tilesSide + tilesSide / 2, x0 + (j - 1) * tilesSide};
+							Sint16 py [] = {y0 + (i + 1) * tilesSide, y0 + (i + 1) * tilesSide, y0 + (i + 2) * tilesSide, y0 + (i + 2) * tilesSide, y0 + (i + 1) * tilesSide + tilesSide / 2};
+							filledPolygonColor(target, px, py, 5, col);
+						}
+					}
+				}
+			}
+			
+			curLayer++;//Next layer
+		}
+	};
+	
 	//Function to make picture of the map
 	void makePict(){
 		_print(pict, pict->w / 2, pict->h / 2, true);//Prints map on picture
@@ -480,6 +705,11 @@ class map: public content{
 				boxColor(mmap, x * 4, y * 4, (x + 1) * 4, (y + 1) * 4, (tiles[y * w + x].mmapColor << 8) + 255);//Prints tile
 			}
 		}
+	}
+	
+	//Function to make transitions mask
+	void makeTmap(){
+		_printT(tmap, tmap->w / 2, tmap->h / 2, 0x000000FF);//Prints transitions on transitions mask
 	}
 	
 	//Function to print picture of the map
@@ -520,6 +750,15 @@ class map: public content{
 		
 		//No need to call error function here, it is called by the get function (see gameHeaders.h)
 	}
+	
+	//Function to get the tile under given coordinates (pixel-level, referring to top left corner)
+	terrain* getTile(unsigned int x, unsigned int y){
+		int tX = floor(x / tilesSide);//X coord of the tile
+		int tY = floor(y / tilesSide);//Y coord of the tile
+		
+		if (tX < w && tY < h) return &tiles[tY * w + tX];//Returns pointer to tile
+		else return NULL;//Returns null if coordinates are invalid
+	}
 		
 	//Function to create new unit
 	unit* createUnit(string id, string name, int x, int y){
@@ -528,6 +767,7 @@ class map: public content{
 		if (u){//If unit exists
 			unit newUnit = *u;//New unit
 			
+			newUnit.parent = this;
 			newUnit.name = name;
 			newUnit.x = x;
 			newUnit.y = y;
@@ -587,6 +827,7 @@ class map: public content{
 				
 				makePict();//Makes picture
 				makeMmap();//Makes minimap
+				makeTmap();//Makes transitions map
 			}
 			
 			#ifdef _ERROR
@@ -594,7 +835,79 @@ class map: public content{
 			#endif
 		}
 	#endif
+	
+	//Function to exec everything connected to timelapse
+	void _time(){
+		list<unit>::iterator i;//Iterator
+		for (i = units.begin(); i != units.end(); i++) i->_time();//Execs time function for each unit
+	}
+	
+	//Function to animate map
+	void animate(){
+		list<unit>::iterator i;//Iterator
+		for (i = units.begin(); i != units.end(); i++) i->anims.next();//Next anim function for each unit
+	}
 } activeMap;
+
+//Function to move unit
+void unit::walk(int direction){
+	this->direction = direction;//Sets direction
+	
+	switch (direction){
+		case NORTH:
+		anims.setAnim("walk_n");//Sets animation
+		if (parent && y - speed <= margin) y = margin;//Handles out of map
+		
+		else if (parent){//Handles tiles
+			Uint32 px = ((Uint32*) parent->tmap->pixels)[(y - speed - margin) * parent->tmap->w + x];//Pixel in next position
+			if (px != 0x000000) y -= speed;
+		}
+		
+		else y -= speed;
+		break;
+		
+		case EAST:
+		anims.setAnim("walk_e");//Sets animation
+		if (parent && x + speed >= parent->width() * tilesSide - margin) x = parent->width() * tilesSide - margin;
+		
+		else if (parent){//Handles tiles
+			Uint32 px = ((Uint32*) parent->tmap->pixels)[y * parent->tmap->w + x + speed + margin];//Pixel in next position
+			if (px != 0x000000) x += speed;
+		}
+		
+		else x += speed;
+		break;
+		
+		case SOUTH:
+		anims.setAnim("walk_s");//Sets animation
+		
+		if (parent && y + speed >= parent->height() * tilesSide - margin) y = parent->height() * tilesSide - margin;//Handles out of map
+		
+		else if (parent){//Handles tiles
+			Uint32 px = ((Uint32*) parent->tmap->pixels)[(y + speed + margin) * parent->tmap->w + x];//Pixel in next position
+			if (px != 0x000000) y += speed;
+		}
+		
+		else y += speed;
+		break;
+		
+		case WEST:
+		anims.setAnim("walk_w");//Sets animation
+		
+		if (parent && x - speed <= margin) x = margin;//Handles out of map
+		
+		else if (parent){//Handles tiles
+			Uint32 px = ((Uint32*) parent->tmap->pixels)[y * parent->tmap->w + x - speed - margin];//Pixel in next position
+			if (px != 0x000000) x -= speed;
+		}
+		
+		else x -= speed;
+		break;
+		
+		default:
+		anims.setAnim("idle_s");//Sets default animation if wrong direction was given
+	}
+}
 
 list <map> mapDb;//Maps database
 
@@ -624,14 +937,19 @@ void loadDatabase(object o){
 }
 
 //Initialization function
-void game_init(string dbFile, string mapId){
+void game_init(string dbFile, string settingsFile, string mapId){
 	uiInit();
 	image_init();
-	
+		
 	initWindow(800, 600, "Tales of Solgonya");
 	
 	fileData f (dbFile);//File data for database
 	loadDatabase(f.objGen("db"));//Loads database
+	
+	fileData s (settingsFile);//Settings file
+	object settings = s.objGen("settings");//Loads settings
+	
+	if (settings.getVar("font_global")) globalFont = TTF_OpenFont(settings.getVar("font_global")->value.c_str(), 12);//Opens global font
 	
 	activeMap = *get(&mapDb, mapId);//Loads map
 }
