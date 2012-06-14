@@ -75,6 +75,9 @@ int image_init(){
 	#define CACHEDIMG(ID)	imgCache.getObj(ID)//Macro to get image from cache
 #endif
 
+#define ANIM_STANDARD	0b00000000//Standard animation
+#define ANIM_PLAYONCE	0b00000001//Play-once animation (NOTE: this is not handled directly by the image.h header - you must handle it in your program)
+
 //Image class
 class image{
 	public:
@@ -144,11 +147,14 @@ class anim{
 	deque<image> frames;//Frames of the animation
 	deque<string> sequence;//Names of the frames in sequence
 	
-	int curFrame;//Current frame
+	Uint8 flags;//Animation flags
+	
+	unsigned int curFrame;//Current frame
 	
 	//Constructor
 	anim(){
 		curFrame = 0;
+		flags = ANIM_STANDARD;
 	}
 	
 	//Function to print the animation
@@ -181,6 +187,7 @@ class anim{
 		void fromScriptObj(object o){
 			if (o.type == OBJTYPE_ANIM){//If the object type is matching
 				var* seq = o.getVar("sequence");//Sequence variable
+				var* playOnce = o.getVar("playOnce");//Play once variable
 				
 				id = o.name;//The id is the name of the object
 				
@@ -193,6 +200,8 @@ class anim{
 						tok = strtok(NULL, ", ");//Next token
 					}
 				}
+				
+				if (playOnce && playOnce->intValue()) flags |= ANIM_PLAYONCE;//Play once flag
 				
 				deque<object>::iterator i;//Iterator for sub-objects
 				for (i = o.o.begin(); i != o.o.end(); i++){//For each object
@@ -209,6 +218,11 @@ class anim{
 			#endif
 		}
 	#endif
+	
+	//Function returning total duration
+	int duration(){
+		return sequence.size();
+	}
 };
 
 //Animation set class
@@ -230,6 +244,11 @@ class animSet{
 			if (i->id == id) return &*i;//Returns the pointer to the animation if matches
 			
 		return NULL;//Returns null if no animation was found
+	}
+	
+	//Function to get a pointer to current anim
+	anim* current(){
+		return &anims[curAnim];//Returns current animation
 	}
 	
 	//Functiont to set the anim by id

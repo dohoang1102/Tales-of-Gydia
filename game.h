@@ -16,6 +16,9 @@ int tilesSide = 32;//Side of each tile of the map
 #include <string>
 #include <deque>
 #include <list>
+#include <cstdlib>
+#include <ctime>
+#include <algorithm>
 
 using namespace std;
 
@@ -30,6 +33,9 @@ int DB_VARIABLEWARNING		= getErrorCode();//Non-lethal variable error in database
 #define OBJTYPE_TERRAIN		"terrain"//Object type terrain
 #define OBJTYPE_UNIT		"unit"//Object type unit
 #define OBJTYPE_MAP			"map"//Object type map
+#define OBJTYPE_WEAPON		"weapon"//Object type weapon
+
+#define MINIMAP_RES			8//Minimap resolution (square size)
 
 #define CONTROLLER_HUMAN	0//Controller mode human (keyboard + mouse)
 #define CONTROLLER_AI		1//Controller mode AI
@@ -49,13 +55,46 @@ int DB_VARIABLEWARNING		= getErrorCode();//Non-lethal variable error in database
 
 #define CMD_SAY				0x20//Say command
 
+#define CMD_STRIKE			0x30//Strike command
+
 #define SPEAKTIME			2500//Speaking time
+
+#define UPHASE_IDLE			0//Idle unit phase: awaiting orders
+#define UPHASE_WALKING		1//Walking unit phase: can receive orders
+#define UPHASE_RAISEWEAPON	2//Unit raises weapon: cannot receive orders
+#define UPHASE_STRIKING		3//Unit strikes: cannot receive orders
+#define UPHASE_LOWERWEAPON	4//Unit lowers weapon: cannot receive orders
+
+#define AWAITING(UNIT)		((UNIT).phase == UPHASE_IDLE || (UNIT).phase == UPHASE_WALKING)//Macro to get if unit can receive orders
+#define WEAPONPHASE(PHASE)	(PHASE == UPHASE_RAISEWEAPON || PHASE == UPHASE_STRIKING || PHASE == UPHASE_LOWERWEAPON)//Macro to get if phase needs weapon print
+
+#define DIST(X1,Y1,X2,Y2)	(sqrt((X1 - X2)*(X1 - X2) + (Y1 - Y2)*(Y1 - Y2)))//Distance macro
 
 class map;//Map class prototype
 
 typedef struct {int code; string args;} order;//Order structure
 
 TTF_Font* globalFont = NULL;//Global font
+
+//Function converting direction in character
+char dirToChar(int dir){
+	switch (dir){
+		case NORTH: return 'n';
+		case EAST:	return 'e';
+		case SOUTH:	return 's';
+		case WEST:	return 'w';
+	}
+}
+
+//Function converting direction in string
+string dirToString(int dir){
+	switch (dir){
+		case NORTH: return "n";
+		case EAST:	return "e";
+		case SOUTH:	return "s";
+		case WEST:	return "w";
+	}
+}
 
 //Content base class
 class content{
@@ -169,33 +208,98 @@ class terrain: public content{
 
 list <terrain> terrainDb;//Terrains database
 
+//Weapon class
+class weapon: public content{
+	public:
+	animSet overlay;//Animations shown when using weapon
+	int damageMax, damageMin;//Maximum and minimum damage (effective damage is random value between these)
+	string strikeAnim;//Unit animation associated to this weapon
+	
+	//Constructor
+	weapon(){
+		damageMax = 1;
+		damageMin = 0;
+	}
+	
+	//Function to get random weapon damage
+	int getDamage(){
+		if (damageMax != damageMin) return damageMin + (rand() % (damageMax - damageMin));//Returns damage
+		else return damageMax;
+	}
+	
+	//Function to print item overlay
+	void print(SDL_Surface* target, int x, int y){
+		overlay.print(target, x, y);//Prints animation
+	}
+	
+	//Function to load from script object
+	void fromScriptObj(object o){
+		if (o.type == OBJTYPE_WEAPON){//If type matches
+			content::fromScriptObj(o);//Loads base content
+			
+			object* overlay = o.getObj("overlay");//Overlay object
+			var* damageMax = o.getVar("damageMax");//Damage max variable
+			var* damageMin = o.getVar("damageMin");//Damage min variable
+			var* strikeAnim = o.getVar("strikeAnim");//Strike anim variable
+			
+			if (overlay) this->overlay.fromScriptObj(*overlay);//Loads overlay
+			if (damageMax) this->damageMax = damageMax->intValue();//Gets maximum damage
+			if (damageMin) this->damageMin = damageMin->intValue();//Gets minimum damage
+			if (strikeAnim) this->strikeAnim = strikeAnim->value;//Gets strike animation
+		}
+	}
+};
+
+list <weapon> weaponDb;//Weapons database
+
 //Unit class
 class unit: public content{
+	private:
+	unsigned int strikeBegin;//Beginning of striking phase (end is after strikeAnim.frameDuration * strikeAnim.sequence.size() milliseconds)
+		
 	public:
-	string name;//Unit name
-	int x, y;//Unit position
-	int speed;//Unit walking speed
-	int margin;//Unit margin (minimum distance from limits)
-	int direction;//Current direction
+	unsigned int phase;//Unit phase (idle, walking, striking, ...)
+	unsigned int margin;//Unit margin (minimum distance from limits)
+	unsigned int direction;//Current direction
 	animSet anims;//Unit animations
+	
+	string name;//Unit name
+	
+	unsigned int x, y;//Unit position
+	unsigned int speed;//Unit walking speed
+	
+	int hits, maxHits;//Unit hits and max hits
 	
 	map *parent;//Parent map
 	
 	string saying;//Words said by the unit
 	unsigned int sayStart;//Time of speaking command
 	
+	weapon primary;//Primary weapon
+	
 	//Constructor
 	unit(){
+		strikeBegin = 0;
 		x = 0;
 		y = 0;
 		speed = 5;
 		direction = SOUTH;
 		parent = NULL;
+		phase = UPHASE_IDLE;
+		hits = 1;
+		maxHits = 1;
 	}
 	
 	//Function to print unit
 	void print(SDL_Surface* target, int x, int y){
 		anims.print(target, x, y);//Prints animation
+		if (WEAPONPHASE(phase)) primary.print(target, x, y);//Prints primary weapon if striking
+		
+		//Prints hitbar
+		if (hits > 0 && maxHits > 0){
+			SDL_Rect hitBar = {x - tilesSide / 2, y + anims.current()->frames[anims.current()->curFrame].cShiftY + anims.current()->frames[anims.current()->curFrame].rect.h / 2, hits * tilesSide / maxHits, 4};
+			boxColor(target, hitBar.x, hitBar.y, hitBar.x + hitBar.w, hitBar.y + hitBar.h, 0xA00000A0);
+		}
 		
 		if (saying != "" && globalFont){//If unit is saying something and there's a valid font
 			SDL_Surface* text = TTF_RenderText_Solid(globalFont, saying.c_str(), SDL_Color {30,30,30});//Text surface
@@ -219,14 +323,19 @@ class unit: public content{
 			content::fromScriptObj(o);//Loads base content data
 			
 			object* anims = o.getObj("anims");//Animations
-			var* speed = o.getVar("speed");//Speed variable
 			var* margin = o.getVar("margin");//Margin variable
 			
+			var* speed = o.getVar("speed");//Speed variable
+			
+			var* maxHits = o.getVar("hits");//Max hits variable
+			
 			if (anims) this->anims.fromScriptObj(*anims);//Loads animations
-			if (speed) this->speed = speed->intValue();//Gets speed
 			if (margin) this->margin = margin->intValue();//Gets margin
+			if (speed) this->speed = speed->intValue();//Gets speed
+			if (maxHits) this->maxHits = maxHits->intValue();//Gets max hits
 			
 			this->anims.setAnim("idle_s");//Sets animation
+			hits = this->maxHits;//Sets current hits
 		}
 	}
 	
@@ -235,12 +344,8 @@ class unit: public content{
 	
 	//Function to stop unit (sets idle animation)
 	void stop(){
-		switch (direction){
-			case NORTH: anims.setAnim("idle_n"); break;
-			case EAST: anims.setAnim("idle_e"); break;
-			case SOUTH: anims.setAnim("idle_s"); break;
-			case WEST: anims.setAnim("idle_w"); break;
-		}
+		anims.setAnim("idle_" + dirToString(direction));
+		phase = UPHASE_IDLE;
 	}
 	
 	//Function to speak
@@ -249,19 +354,43 @@ class unit: public content{
 		saying = text;//Sets text
 	}
 	
+	//Function to strike
+	void strike(){
+		anims.setAnim(primary.strikeAnim + "_" + dirToString(direction));
+		primary.overlay.setAnim("strike_" + dirToString(direction));
+		primary.overlay.current()->curFrame = 0;
+		
+		strikeBegin = SDL_GetTicks();
+		phase = UPHASE_STRIKING;
+	}
+	
 	//Function to receive and execute orders
 	void execOrder(order o){
 		if (o.code == CMD_IDLE) stop();//Idle command - stops unit
+		
 		else if ((o.code & 0xF0) == CMD_MOVE) walk(o.code & 0xF);//Move command - moves unit
+		
 		else if (o.code == CMD_SAY) say(o.args);//Say command
+		
+		else if (o.code == CMD_STRIKE) strike();//Strike command
+		
 		else stop();//Stops unit on any other command
 	}
 	
 	//Function executing everything connected to timelapse
-	void _time(){
-		if (SDL_GetTicks() - sayStart >= SPEAKTIME) saying = "";//Clears words said by unit
+	void _time();
+	
+	//Function to give primary weapon to unit
+	void giveWeapon_primary(string id){
+		weapon* w = get(&weaponDb, id);//Gets weapon
+		if (w) primary = *w;//Sets weapon if existing
 	}
 };
+
+//Function used to sort units: returns if unit is before other unit
+bool sortUnits_compare(unit* a, unit* b){
+	return a->y < b->y || (a->y == b->y && a->x < b->x);
+}
 
 list <unit> unitDb;//Units database
 
@@ -286,7 +415,7 @@ class controller{
 		list<unit*>::iterator i;//Iterator
 		
 		for (i = u.begin(); i != u.end(); i++)//For each unit
-			(*i)->execOrder(o);//Gives order to unit
+			if (AWAITING(**i))(*i)->execOrder(o);//Gives order to unit if possible
 	}
 	
 	//Function that gets input from keyboard-mouse
@@ -295,8 +424,11 @@ class controller{
 		
 		Uint8* keys = SDL_GetKeyState(NULL);//Gets keys
 		
+		//Striking orders
+		if (keys[SDLK_SPACE]) giveOrder({CMD_STRIKE, ""});
+		
 		//Walking orders
-		if (keys[SDLK_UP]) giveOrder({CMD_MOVE_N, ""});
+		else if (keys[SDLK_UP]) giveOrder({CMD_MOVE_N, ""});
 		else if (keys[SDLK_RIGHT]) giveOrder({CMD_MOVE_E, ""});
 		else if (keys[SDLK_DOWN]) giveOrder({CMD_MOVE_S, ""});
 		else if (keys[SDLK_LEFT]) giveOrder({CMD_MOVE_W, ""});
@@ -316,7 +448,7 @@ class map: public content{
 	SDL_Surface* mmap;//Picture of the minimap
 	SDL_Surface* tmap;//Picture of the transitions mask
 		
-	list <unit> units;//Units of the map
+	deque <unit*> units;//Units of the map
 	
 	//Constructor
 	map(){
@@ -350,7 +482,7 @@ class map: public content{
 		if (mmap) SDL_FreeSurface(mmap);//Frees minimap
 		
 		pict = SDL_CreateRGBSurface(SDL_SWSURFACE, w * tilesSide, h * tilesSide, 32, 0, 0, 0, 0);//Creates picture
-		mmap = SDL_CreateRGBSurface(SDL_SWSURFACE, w * 4, h * 4, 32, 0, 0, 0, 0);//Creates minimap
+		mmap = SDL_CreateRGBSurface(SDL_SWSURFACE, w * MINIMAP_RES, h * MINIMAP_RES, 32, 0, 0, 0, 0);//Creates minimap
 		tmap = SDL_CreateRGBSurface(SDL_SWSURFACE, w * tilesSide, h * tilesSide, 32, 0, 0, 0, 0);//Creates transitions map
 	}
 	
@@ -702,7 +834,7 @@ class map: public content{
 		//For each tile
 		for (y = 0; y < h; y++){
 			for (x = 0; x < w; x++){
-				boxColor(mmap, x * 4, y * 4, (x + 1) * 4, (y + 1) * 4, (tiles[y * w + x].mmapColor << 8) + 255);//Prints tile
+				boxColor(mmap, x * MINIMAP_RES, y * MINIMAP_RES, (x + 1) * MINIMAP_RES, (y + 1) * MINIMAP_RES, (tiles[y * w + x].mmapColor << 8) + 255);//Prints tile
 			}
 		}
 	}
@@ -712,6 +844,11 @@ class map: public content{
 		_printT(tmap, tmap->w / 2, tmap->h / 2, 0x000000FF);//Prints transitions on transitions mask
 	}
 	
+	//Function to sort units by position
+	void sortUnits(){
+		sort(units.begin(), units.end(), sortUnits_compare);
+	}
+	
 	//Function to print picture of the map
 	void print(SDL_Surface* target, int x, int y){
 		//Prints base
@@ -719,9 +856,10 @@ class map: public content{
 		SDL_BlitSurface(pict, NULL, target, &offset);//Prints picture
 			
 		//Prints units
-		list<unit>::iterator u;//Unit iterator
+		deque<unit*>::iterator u;//Unit iterator
+		
 		for (u = units.begin(); u != units.end(); u++){//For each unit in map
-			u->print(target, offset.x + u->x, offset.y + u->y);//Prints unit
+			(*u)->print(target, offset.x + (*u)->x, offset.y + (*u)->y);//Prints unit
 		}
 	}
 	
@@ -765,16 +903,17 @@ class map: public content{
 		unit* u = get(&unitDb, id);//Gets unit
 		
 		if (u){//If unit exists
-			unit newUnit = *u;//New unit
+			unit* newUnit = new unit;//New unit
+			*newUnit = *u;
 			
-			newUnit.parent = this;
-			newUnit.name = name;
-			newUnit.x = x;
-			newUnit.y = y;
+			newUnit->parent = this;
+			newUnit->name = name;
+			newUnit->x = x;
+			newUnit->y = y;
 			
 			units.push_back(newUnit);//Adds new unit
 			
-			return &units.back();//Returns pointer to last unit
+			return units.back();//Returns pointer to last unit
 		}
 		else if (errFunc) errFunc(DB_VARIABLEWARNING, "Unit " + id + " not found");
 		
@@ -836,22 +975,25 @@ class map: public content{
 		}
 	#endif
 	
-	//Function to exec everything connected to timelapse
-	void _time(){
-		list<unit>::iterator i;//Iterator
-		for (i = units.begin(); i != units.end(); i++) i->_time();//Execs time function for each unit
+	//Function damaging units in range r from point x,y
+	void damage(int x, int y, int r, int amount){
+		deque<unit*>::iterator u;//Iterator
+		
+		for (u = units.begin(); u != units.end(); u++)//For each unit
+			if (DIST(x, y, (*u)->x, (*u)->y) <= r) (*u)->hits -= amount;//Damages unit if in area
 	}
 	
-	//Function to animate map
-	void animate(){
-		list<unit>::iterator i;//Iterator
-		for (i = units.begin(); i != units.end(); i++) i->anims.next();//Next anim function for each unit
+	//Function to exec everything connected to timelapse
+	void _time(){
+		deque<unit*>::iterator i;//Iterator
+		for (i = units.begin(); i != units.end(); i++) (*i)->_time();//Execs time function for each unit
 	}
 } activeMap;
 
 //Function to move unit
 void unit::walk(int direction){
 	this->direction = direction;//Sets direction
+	phase = UPHASE_WALKING;//Walking phase
 	
 	switch (direction){
 		case NORTH:
@@ -907,6 +1049,34 @@ void unit::walk(int direction){
 		default:
 		anims.setAnim("idle_s");//Sets default animation if wrong direction was given
 	}
+	
+	if (parent) parent->sortUnits();//Sorts units in parent scenario if existing
+}
+
+//Function executing everything connected to timelapse
+void unit::_time(){
+	anims.next();//Next frame
+	if (WEAPONPHASE(phase)) primary.overlay.next();//Next frame for primary weapon
+	
+	if (saying != "" && SDL_GetTicks() - sayStart >= SPEAKTIME) saying = "";//Clears words said by unit
+	
+	if (phase == UPHASE_STRIKING && anims.current()->curFrame == anims.current()->duration() - 1) stop();//Stops if just finished striking
+	else if (phase == UPHASE_STRIKING && anims.current()->curFrame == floor(anims.current()->duration() / 2)){//At half striking animation
+		switch(direction){
+		case NORTH:
+			parent->damage(x, y - tilesSide / 2, tilesSide / 2 - 1, primary.getDamage());
+			break;
+		case SOUTH:
+			parent->damage(x, y + tilesSide / 2, tilesSide / 2 - 1, primary.getDamage());
+			break;
+		case EAST:
+			parent->damage(x + tilesSide / 2, y, tilesSide / 2 - 1, primary.getDamage());
+			break;
+		case WEST:
+			parent->damage(x - tilesSide / 2, y, tilesSide / 2 - 1, primary.getDamage());
+			break;
+		}
+	}
 }
 
 list <map> mapDb;//Maps database
@@ -933,15 +1103,23 @@ void loadDatabase(object o){
 			newUnit.fromScriptObj(*i);//Loads unit
 			unitDb.push_back(newUnit);//Adds unit to database
 		}
+		
+		if (i->type == OBJTYPE_WEAPON){//If object is a weapon
+			weapon newWeapon;//New weapon
+			newWeapon.fromScriptObj(*i);//Loads weapon
+			weaponDb.push_back(newWeapon);//Adds weapon to database
+		}
 	}
 }
 
 //Initialization function
 void game_init(string dbFile, string settingsFile, string mapId){
-	uiInit();
-	image_init();
+	srand(time(NULL));//Randomize
+	
+	uiInit();//Initializes UI
+	image_init();//Initializes image library
 		
-	initWindow(800, 600, "Tales of Solgonya");
+	initWindow(800, 600, "Tales of Solgonya");//Window setup
 	
 	fileData f (dbFile);//File data for database
 	loadDatabase(f.objGen("db"));//Loads database
