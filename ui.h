@@ -590,7 +590,6 @@ class textBox: public control{
 				newText.erase(text.size() - 1, 1);//Removes last char if pressed backspace
 				typeText(newText);//
 			}
-			else if (e.key.keysym.sym == SDLK_RETURN) focus = false;//Exits focus if pressed enter
 		}
 	}
 	
