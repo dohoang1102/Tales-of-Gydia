@@ -25,9 +25,21 @@ Just build the test.cpp source file - it includes all the headers and runs map d
   - SDL_ttf.dll
   - zlib1.dll
 
-The file imgCFG.cpp runs a small command-line utility to generate a .cfg file from a spritesheet, describing all frames of the sheet in the unnamed script language of above.
+The file imgCFG.cpp contains a small command-line utility to generate a .cfg file from a spritesheet, describing all frames of the sheet in the unnamed script language of above.
 
-The game has not been tested on any OS apart from Windows XP (my fault, sorry :)) but as far as I know should be running on Ubuntu, Windows Vista and Seven (hopefully...)
+The file worldEditor.cpp contains the map editor; I have developed it quickly, so it has a raw command line interface. The prompt accepts following commands:
+  - new <width> <height> <base tile>: creates a new map of size <width> x <height> filled with tile with id <base tile> on layer 0
+  - fill <tile> <layer>: fills map with tile <tile> on layer <layer>
+  - pick <tile> <layer>: picks as brush tile <tile> on layer <layer> (left click: paint, right click: pick terrain, middle click: bucket fill)
+  - deco <deco>: picks as brush decoration <deco> (left click: paint,  right click: erase)
+  - open <map>: opens map with name <map> (opens map only as they were in database when editor started)
+  - save <path>: saves map file in path <path> (relative to executable directory)
+  - id <id>: sets map id
+  - author <author>: sets map author
+  - desc <description>: sets map short description
+Additional features (such as a real UI) might come in future updates, but at the moment I'm focused on the game itself.
+
+The game has not been tested (yet) on any OS apart from Windows XP (my fault, sorry :)) but as far as I know should be running on Ubuntu, Windows Vista and Seven (hopefully...)
 
 Enjoy!
 Buch
