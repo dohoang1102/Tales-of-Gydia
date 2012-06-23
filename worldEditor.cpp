@@ -6,7 +6,7 @@ bool running = true;
 SDL_Event e;
 
 textBox prompt;//Command prompt
-string brush = "grass"; int brushLayer = 0;//Currently picked terrain and layer
+int mode = 0; string brush = "grass"; int brushLayer = 0;//Currently picked terrain and layer
 
 //Bucket fill function
 void bucketFill(map* m, int x, int y, string brushId, int brushLayer){
@@ -62,24 +62,30 @@ void edit(map* m){
 				else if (tokens[0] == "new" && tokens.size() >= 4){
 					m->resize(atoi(tokens[1].c_str()), atoi(tokens[2].c_str()));
 					m->fill(tokens[3], 0);
-					m->makePict();
+					m->makePict(true);
 					m->makeMmap();
 				}
 				
 				else if (tokens[0] == "fill" && tokens.size() >= 3){
 					m->fill(tokens[1], atoi(tokens[2].c_str()));
-					m->makePict();
+					m->makePict(true);
 					m->makeMmap();
 				}
 				
 				else if (tokens[0] == "pick" && tokens.size() >= 3){
+					mode = 0;
 					brush = tokens[1];
 					brushLayer = atoi(tokens[2].c_str());
 				}
 				
+				else if (tokens[0] == "deco" && tokens.size() >= 2){
+					mode = 1;
+					brush = tokens[1];
+				}
+				
 				else if (tokens[0] == "undo" && oldX != -1){
 					m->setTile(oldX, oldY, oldTerrain, oldLayer);
-					m->makePict();
+					m->makePict(true);
 					m->makeMmap();
 				}
 				
@@ -92,10 +98,15 @@ void edit(map* m){
 					fPath.erase(0,1);
 					
 					ofstream f(fPath.c_str());
-					f << OBJTYPE_MAP << " " << activeMap.id << " {\n";
-					f << activeMap.toScriptObj().toString(1);
+					f << OBJTYPE_MAP << " " << m->id << " {\n";
+					f << m->toScriptObj().toString(1);
 					f << "};";
 					f.close();
+				}
+				
+				else if (tokens[0] == "open" && tokens.size() >= 1){
+					if (get(&mapDb, tokens[1])) m = get(&mapDb, tokens[1]);
+					m->makePict(true);
 				}
 								
 				else if (tokens[0] == "quit") edit = false;
@@ -109,25 +120,35 @@ void edit(map* m){
 				int tY = floor((e.button.y - (window->h / 2 - m->pict->h / 2 + oY)) / tilesSide);
 				
 				if (m->getTile(tX, tY)){
-					if (e.button.button == SDL_BUTTON_LEFT){
+					if (e.button.button == SDL_BUTTON_LEFT && mode == 0){
 						oldX = tX;
 						oldY = tY;
 						oldLayer = m->getTile(tX, tY)->layer;
 						oldTerrain = m->getTile(tX, tY)->id;
 						
 						m->setTile(tX, tY, brush, brushLayer);
-						m->makePict();
+						m->makePict(true);
 						m->makeMmap();
 					}
 					
-					else if (e.button.button == SDL_BUTTON_RIGHT){
+					else if (e.button.button == SDL_BUTTON_LEFT && mode == 1){
+						m->createDeco(brush, tX, tY);
+						m->makePict(true);
+					}
+					
+					else if (e.button.button == SDL_BUTTON_RIGHT && mode == 0){
 						brush = m->getTile(tX, tY)->id;
 						brushLayer = m->getTile(tX, tY)->layer;
 					}
 					
-					else if (e.button.button == SDL_BUTTON_MIDDLE){
+					else if (e.button.button == SDL_BUTTON_RIGHT && mode == 1){
+						m->removeDeco(tX, tY);
+						m->makePict(true);
+					}
+					
+					else if (e.button.button == SDL_BUTTON_MIDDLE && mode == 0){
 						bucketFill(m, tX, tY, brush, brushLayer);
-						m->makePict();
+						m->makePict(true);
 						m->makeMmap();
 					}
 				}
@@ -156,7 +177,7 @@ void edit(map* m){
 		for (t = terrainDb.begin(); t != terrainDb.end(); t++, i++){
 			t->print(window, o.x, o.y);
 			
-			if (brush == t->id){
+			if (brush == t->id && mode == 0){
 				boxColor(window, o.x - tilesSide / 2 - 2, o.y - tilesSide / 2 - 2, o.x + tilesSide / 2 + 1, o.y + tilesSide / 2 + 1, 0xFFFFFF5A);
 			}
 			
@@ -225,7 +246,7 @@ int main(int argc, char* argv[]){
 	
 	activeMap.resize(5,5);
 	activeMap.fill("dirt",0);
-	activeMap.makePict();
+	activeMap.makePict(true);
 	activeMap.makeMmap();
 	edit(&activeMap);
 	

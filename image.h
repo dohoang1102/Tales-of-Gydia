@@ -77,6 +77,7 @@ int image_init(){
 
 #define ANIM_STANDARD	0b00000000//Standard animation
 #define ANIM_PLAYONCE	0b00000001//Play-once animation (NOTE: this is not handled directly by the image.h header - you must handle it in your program)
+#define ANIM_DOUBLE		0b00000010//Play twice each frame (actually duplicates sequence when loading)
 
 //Image class
 class image{
@@ -188,8 +189,12 @@ class anim{
 			if (o.type == OBJTYPE_ANIM){//If the object type is matching
 				var* seq = o.getVar("sequence");//Sequence variable
 				var* playOnce = o.getVar("playOnce");//Play once variable
+				var* dup = o.getVar("dup");//Duplicate variable
 				
 				id = o.name;//The id is the name of the object
+				
+				if (playOnce && playOnce->intValue()) flags |= ANIM_PLAYONCE;//Play once flag
+				if (dup && dup->intValue()) flags |= ANIM_DOUBLE;//Double flag
 				
 				if (seq){//If the sequence variable exists
 					char* cstr = (char*) seq->value.c_str();//C-string variable
@@ -197,11 +202,10 @@ class anim{
 					
 					while (tok){//While there are tokens left
 						sequence.push_back(string(tok));//Adds the string to the sequence
+						if (flags & ANIM_DOUBLE) sequence.push_back(string(tok));//Adds the string to the sequence
 						tok = strtok(NULL, ", ");//Next token
 					}
 				}
-				
-				if (playOnce && playOnce->intValue()) flags |= ANIM_PLAYONCE;//Play once flag
 				
 				deque<object>::iterator i;//Iterator for sub-objects
 				for (i = o.o.begin(); i != o.o.end(); i++){//For each object
@@ -222,6 +226,11 @@ class anim{
 	//Function returning total duration
 	int duration(){
 		return sequence.size();
+	}
+	
+	//Function returning current frame
+	image* current(){
+		return getFrame(sequence[curFrame]);
 	}
 };
 

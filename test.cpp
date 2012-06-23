@@ -13,11 +13,13 @@ int main(int argc, char* argv[]){
 	game_init("data\\cfg\\db.cfg", "data\\cfg\\settings.cfg");
 	activeMap = *get(&mapDb, "tutorial_island");
 	
-	unit *hero = activeMap.createUnit("baseMale", "buch", 15, 15, 0);
-	hero->giveWeapon_primary("staff");
+	unit *hero = activeMap.createUnit("slime", "buch", 15, 15, 0);
+	hero->giveWeapon_primary("bash");
 	controller c;
-	c.addUnit(hero);
-		
+	c.u = hero;
+	
+	int turn = 0;
+			
 	while (running){
 		lfb = SDL_GetTicks();
 		
@@ -26,16 +28,16 @@ int main(int argc, char* argv[]){
 			else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) running = false;
 		}
 		
-		
 		SDL_FillRect(window, &window->clip_rect, 0);
 		activeMap.print(window, window->w / 2, window->h / 2, hero);
 		SDL_Flip(window);
 		
 		activeMap.nextFrame();
-		c.getInput();
-		
+		if (c.ready()) c.getInput();
+
 		if (SDL_GetTicks() - lfb < 1000 / fps) SDL_Delay(1000 / fps + lfb - SDL_GetTicks());
 	}
 	
 	return 0;
 }
+	

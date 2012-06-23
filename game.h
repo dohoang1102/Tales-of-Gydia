@@ -28,11 +28,11 @@ int MAP_WARNING 			= getErrorCode();//Generic map warning
 
 int DB_VARIABLEWARNING		= getErrorCode();//Non-lethal variable error in database object
 
+#define OBJTYPE_DECO		"deco"//Object type deco
 #define OBJTYPE_TERRAIN		"terrain"//Object type terrain
 #define OBJTYPE_WEAPON		"weapon"//Object type weapon
 #define OBJTYPE_UNIT		"unit"//Object type unit
 #define OBJTYPE_MAP			"map"//Object type map
-#define OBJTYPE_WORLD		"world"//Object type world
 
 #define MINIMAP_RES			4//Minimap resolution (square size)
 #define MINIMAP_USIZE		6//Minimap unit size
@@ -57,6 +57,7 @@ int DB_VARIABLEWARNING		= getErrorCode();//Non-lethal variable error in database
 #define ACT_WALK			0x10//Walking
 #define ACT_STRIKE			0x20//Striking
 #define ACT_DYING			0x30//Dying
+#define ACT_DEAD			0x40//Dead
 
 #define GETACODE(ACT,DIR)	((ACT) | (DIR))//Macro to get action and direction code out of separate action and direction
 #define GETACT(CODE) 		((CODE) & 0xF0)//Macro to get action code out of code with action and direction
@@ -70,6 +71,8 @@ typedef struct {int code; string args;} order;//Order structure
 int tilesSide = 32;//Side of each tile of the map
 
 TTF_Font* globalFont = NULL;//Global font
+
+int turn = 0;
 
 //Function to convert direction in string
 string dirToString (int dir){
@@ -153,6 +156,46 @@ template <class contentType> contentType* get_ptr(deque<contentType*> *source, s
 	return NULL;//Returns a null pointer if no element was found
 }
 
+//Decoration class
+class deco: public content{
+	public:
+	image i;//Decoration image
+	bool free;//Free flag: can walk on deco
+	int x, y;//Coords of deco
+	
+	//Constructor
+	deco(){
+		free = true;
+		x = 0;
+		y = 0;
+	}
+	
+	//Function to load from script object
+	void fromScriptObj(object o){
+		if (o.type == OBJTYPE_DECO){//If type matches
+			content::fromScriptObj(o);//Loads content base data
+			
+			var* free = o.getVar("free");//Free flag
+			object* i = o.getObj("image");//Image flag
+			
+			if (free) this->free = free->intValue();//Gets free flag
+			if (i) this->i.fromScriptObj(*i);//Gets image
+		}
+	}
+	
+	//Print function
+	void print(SDL_Surface* target, int x, int y){
+		i.print(target, x, y);
+	}
+};
+
+//Function determining if a deco comes before another one (lower y or equal y and lower x)
+bool sortDecos_compare(deco* a, deco* b){
+	return a->y < b->y || (a->y == b->y && a->x < b->x);
+}
+
+list <deco> decoDb;//Decos database
+
 //Terrain class
 class terrain: public content{
 	public:
@@ -161,7 +204,7 @@ class terrain: public content{
 	int layer;//Layer of the terrain (transitions are printed only above lower layers)
 	bool free;//Flag indicating if player can walk on terrain
 	Uint32 mmapColor;//Color in minimap
-	
+		
 	//Constructor
 	terrain(){
 		id = "";
@@ -184,11 +227,12 @@ class terrain: public content{
 			
 			if (i){//If transition is valid
 				i->print(target, x, y);//Prints it
-				return;//Exits function
 			}
 		}
 		
-		baseImage.print(target, x, y);//Prints image
+		else {//Else
+			baseImage.print(target, x, y);//Prints image
+		}
 	}
 	
 	#ifdef _SCRIPT
@@ -231,6 +275,7 @@ class weapon: public content{
 	public:
 	//Stats
 	int damageMin, damageMax;//Minimum and maximum damage (effective damage is a random number between these)
+	bool image;//Flag indicating if image was given
 	
 	//Graphics
 	animSet overlay;//Weapon overlay (shown when striking)
@@ -246,6 +291,7 @@ class weapon: public content{
 		damageMax = 1;
 		
 		strikeAnim = "";
+		image = false;
 	}
 	
 	//Function to load from script object
@@ -260,7 +306,7 @@ class weapon: public content{
 			
 			if (damageMin) this->damageMin = damageMin->intValue();//Gets minimum damage
 			if (damageMax) this->damageMax = damageMax->intValue();//Gets maximum damage
-			if (overlay) this->overlay.fromScriptObj(*overlay);//Loads overlay
+			if (overlay){ this->overlay.fromScriptObj(*overlay); image = true;}//Loads overlay
 			if (strikeAnim) this->strikeAnim = strikeAnim->value;//Gets strike animation
 		}
 	}
@@ -269,6 +315,11 @@ class weapon: public content{
 	int damage(){
 		if (damageMin != damageMax) return damageMin + (rand() % (damageMax - damageMin));
 		else return damageMax;
+	}
+	
+	//Function to print weapon
+	void print(SDL_Surface* target, int x, int y){
+		if (image) overlay.print(target,x,y);//Prints image if given
 	}
 };
 
@@ -311,7 +362,7 @@ class unit: public content{
 		y = 0;
 		parent = NULL;
 		
-		action = ACT_IDLE;
+		action = GETACODE(ACT_IDLE, SOUTH);
 		
 		name = "";
 		side = 0;
@@ -324,14 +375,14 @@ class unit: public content{
 	
 	//Unit printing function
 	void print(SDL_Surface* target, int x, int y){
-		anims.print(target, x + dX, y + dY);//Prints using animSet printing function (prints current frame of current animation)
-		if (GETACT(action) == ACT_STRIKE && primary) primary->overlay.print(target, x + dX, y + dY);//Prints weapon
-		
 		//Prints hitbar
 		if (hits > 0 && maxHits > 0){
-			SDL_Rect hitBar = {x - tilesSide / 2 + dX + 2, y + anims.current()->frames[anims.current()->curFrame].cShiftY + anims.current()->frames[anims.current()->curFrame].rect.h / 2 + dY, hits * (tilesSide - 4) / maxHits, 4};
-			boxColor(target, hitBar.x, hitBar.y, hitBar.x + hitBar.w, hitBar.y + hitBar.h, 0xA00000A0);
+			SDL_Rect hitBar = {x + anims.current()->current()->cShiftX - tilesSide / 2 + dX + 2, y + anims.current()->current()->cShiftY + anims.current()->current()->rect.h / 2 + dY, hits * (tilesSide - 4) / maxHits, 4};
+			boxColor(target, hitBar.x, hitBar.y, hitBar.x + hitBar.w, hitBar.y + hitBar.h, 0xA000007A);
 		}
+		
+		anims.print(target, x + dX, y + dY);//Prints using animSet printing function (prints current frame of current animation)
+		if (GETACT(action) == ACT_STRIKE && primary && primary->image) primary->overlay.print(target, x + dX, y + dY);//Prints weapon
 	}
 	
 	//Function to load from script object
@@ -364,8 +415,11 @@ class unit: public content{
 		if (primary){//If weapon is valid
 			action = GETACODE(ACT_STRIKE, GETDIR(action));//Sets action code
 			anims.setAnim(primary->strikeAnim + "_" + dirToString(GETDIR(action)));//Sets striking animation
-			primary->overlay.setAnim("strike_" + dirToString(GETDIR(action)));//Sets weapon animation
-			primary->overlay.current()->curFrame = 0;//Restarts animation
+			
+			if (primary->image){
+				primary->overlay.setAnim("strike_" + dirToString(GETDIR(action)));//Sets weapon animation
+				primary->overlay.current()->curFrame = 0;//Restarts animation
+			}
 		}
 		
 		else stop();
@@ -379,9 +433,6 @@ class unit: public content{
 	
 	//Function to go to next frame
 	void nextFrame();
-	
-	//AI function
-	void AI();
 	
 	//Function returning if unit is ready
 	bool ready(){
@@ -414,22 +465,19 @@ bool sortUnits_compare(unit* a, unit* b){
 
 list<unit> unitDb;//Units database
 
+//Function calculating distance between units
+double uDist(unit* a, unit* b){
+	return sqrt(pow(a->x - b->x, 2) + pow(a->y - b->y, 2));
+}
+
 //Controller class
 class controller{
 	public:
-	list<unit*> units;//Controlled units
-	
-	//Function to add unit to controlled units
-	void addUnit(unit* u){
-		units.push_back(u);//Adds unit to controlled units
-	}
+	unit* u;//Controlled unit
 	
 	//Function to give order to all controlled units
 	void giveOrder(order o){
-		list<unit*>::iterator i;//Iterator
-		
-		for (i = units.begin(); i != units.end(); i++)//For each controlled unit
-			if ((*i)->ready()) (*i)->execOrder(o);//Gives order to unit if ready
+		u->execOrder(o);
 	}
 	
 	//Function to get input from keyboard
@@ -448,22 +496,16 @@ class controller{
 		return false;
 	}
 	
-	//Function to exec AI move
-	void AI(){
-		list<unit*>::iterator i;//Iterator
-		for (i = units.begin(); i != units.end(); i++)//For each unit
-			if ((*i)->ready()) (*i)->AI();//Execs AI function
-	}
-	
 	//Function to get if all controlled units are ready
 	bool ready(){
-		list<unit*>::iterator i;//Iterator
-		for (i = units.begin(); i != units.end(); i++)//For each unit
-			if (!(*i)->ready()) return false;//Returns false if unit is not ready
-			
-		return true;//Returns true if all units were ready
+		return u->ready();
 	}
 };
+
+//Function to compare unit and deco according to position
+bool compare_unitDeco(unit* a, deco* b){
+	return a->y < b->y || (a->y == b->y && a->x < b->x);
+}
 
 //Map class
 class map: public content{
@@ -478,6 +520,7 @@ class map: public content{
 	SDL_Surface* tmap;//Picture of the transitions mask
 	
 	deque<unit*> units;//Units on map
+	deque<deco*> decos;//Decorations on map
 	
 	//Constructor
 	map(){
@@ -670,8 +713,8 @@ class map: public content{
 	}
 	
 	//Function to make picture of the map
-	void makePict(){
-		_print(pict, pict->w / 2, pict->h / 2, false);//Prints map on picture
+	void makePict(bool grid = false){
+		_print(pict, pict->w / 2, pict->h / 2, grid);//Prints map on picture
 	}
 	
 	//Function to make minimap
@@ -689,6 +732,11 @@ class map: public content{
 	//Function to sort units according to position
 	void sortUnits(){
 		sort(units.begin(), units.end(), sortUnits_compare);//Sorts units
+	}
+	
+	//Function to sort decos according to position
+	void sortDecos(){
+		sort(decos.begin(), decos.end(), sortDecos_compare);//Sorts decos
 	}
 	
 	//Function to create an unit on map
@@ -714,6 +762,38 @@ class map: public content{
 		return NULL;//Returns null if failed
 	}
 	
+	//Function to create a deco on map
+	deco* createDeco(string id, int x, int y){
+		deco* d = get(&decoDb, id);//Required deco
+		
+		if (d && isFree(x, y)){//If deco exists and tile is free
+			deco* newDeco = new deco;//Deco to add
+			*newDeco = *d;//Copies deco
+			
+			//Sets deco data
+			newDeco->x = x;
+			newDeco->y = y;
+			
+			decos.push_back(newDeco);//Adds deco to map
+			sortDecos();//Sorts map decos
+			return newDeco;//Returns new deco
+		}
+		
+		return NULL;//Returns null if failed
+	}
+	
+	//Function to remove a deco from map
+	void removeDeco(int x, int y){
+		deque<deco*>::iterator i;//Iterator
+		
+		for (i = decos.begin(); i != decos.end(); i++){//For each deco
+			if ((*i)->x == x && (*i)->y == y){//If position matches
+				decos.erase(i);//Erases deco
+				return;//Exits function
+			}
+		}
+	}
+	
 	//Function to print picture of the map
 	void print(SDL_Surface* target, int x, int y, unit* c = NULL){
 		SDL_Rect offset;//Offset rectangle
@@ -726,13 +806,23 @@ class map: public content{
 		else {//Else
 			offset = {x - tilesSide * c->x - c->dX - tilesSide / 2, y - tilesSide * c->y - c->dY - tilesSide / 2};
 		}
-		SDL_Rect o = offset;
+		SDL_Rect o = offset;//Copies offset rectangle (it gets modified by SDL_Blit, but will be still needed in unit and deco prints)
 		SDL_BlitSurface(pict, NULL, target, &o);//Prints picture
 		
-		//Prints units
-		deque<unit*>::iterator i;//Unit iterator
-		for (i = units.begin(); i != units.end(); i++)//For each unit
-			(*i)->print(target, offset.x + tilesSide * (*i)->x + tilesSide / 2, offset.y + tilesSide * (*i)->y + tilesSide / 2);//Prints unit
+		deque<unit*>::iterator u = units.begin();//Unit iterator
+		deque<deco*>::iterator d = decos.begin();//Deco iterator
+		
+		while (u != units.end() || d != decos.end()){//While there's still something to print
+			if (u != units.end() && compare_unitDeco(*u, *d)){//If unit is before deco
+				(*u)->print(target, offset.x + tilesSide * (*u)->x + tilesSide / 2, offset.y + tilesSide * (*u)->y + tilesSide / 2);//Prints unit
+				u++;//Next unit
+			}
+			
+			else if (d != decos.end()){//Else
+				(*d)->print(target, offset.x + tilesSide * (*d)->x + tilesSide / 2, offset.y + tilesSide * (*d)->y + tilesSide / 2);//Prints deco
+				d++;//Next deco
+			}
+		}
 	}
 	
 	//Function to print minimap
@@ -779,39 +869,64 @@ class map: public content{
 			var* w = o.getVar("w");//Width variable
 			var* h = o.getVar("h");//Height variable
 			var* tiles = o.getVar("tiles");//Tiles variable
+			var* decos = o.getVar("decos");//Decos variable
 			
 			if (w && h) resize(atoi(w->value.c_str()), atoi(h->value.c_str()));//Sets map size
 			
-			char* c = (char*) tiles->value.c_str();//C-string version of tiles
-			char* tok = strtok(c, ",:\t ");//First token
-			int i = 0;//Counter
-			
-			while (tok){//While there's a valid token
-				int x = i % this->w;//X coord of the tile
-				int y = floor (i / this->w);//Y coord of the tile
-				string tileId = tok;//Tile id
+			if (tiles){//If tiles variable was given
+				char* c = (char*) tiles->value.c_str();//C-string version of tiles
+				char* tok = strtok(c, ",\t ");//First token
+				int i = 0;//Counter
 				
-				tok = strtok(NULL, ",:\t ");//Next token
-				int tileLayer = atoi(tok);//Tile layer
-				
-				setTile(x, y, tileId, tileLayer);//Sets tile
-				
-				tok = strtok(NULL, ",:\t ");//Next token
-				i++;//Next tile
-				
-				if (i > this->w * this->h){//If gone past the map size
-					#ifdef _ERROR
-						if (errFunc) errFunc(DB_VARIABLEWARNING, "Too many terrains defined in tiles variable of " + id);
-					#endif
+				while (tok){//While there's a valid token
+					string tInfo = tok;//Tile info string
 					
-					break;//Exits loop
+					int dots = tInfo.find(":");//Dots position
+					string tId = tInfo.substr(0, dots);//Tile id
+					int tLayer = atoi(tInfo.substr(dots + 1).c_str());//Tile layer
+					
+					//Tile coords
+					int tX = i % this->w;
+					int tY = floor(i / this->w);
+					
+					setTile(tX, tY, tId, tLayer);
+					
+					tok = strtok(NULL, ",\t ");//Next token
+					i++;//Next tile
+					
+					if (i > this->w * this->h){//If gone past the map size
+						#ifdef _ERROR
+							if (errFunc) errFunc(DB_VARIABLEWARNING, "Too many terrains defined in tiles variable of " + id);
+						#endif
+						
+						break;//Exits loop
+					}
+				}
+				
+				if (i < this->w * this->h){//If there are still some terrains to define
+					#ifdef _ERROR
+						if (errFunc) errFunc(DB_VARIABLEWARNING, "Not enough terrains defined in tiles variable of " + id);
+					#endif
 				}
 			}
 			
-			if (i < this->w * this->h){//If there are still some terrains to define
-				#ifdef _ERROR
-					if (errFunc) errFunc(DB_VARIABLEWARNING, "Not enough terrains defined in tiles variable of " + id);
-				#endif
+			if (decos){//If decos variable was given
+				char* c = (char*) decos->value.c_str();//C-string version of decos
+				char* tok = strtok(c, ",\t ");//First token
+				
+				while (tok){//While there's a valid token
+					string dInfo = tok;//Deco info string
+					int firstSep = dInfo.find(":");//First dots
+					int lastSep = dInfo.rfind(":");//Last dots
+					
+					string dId = dInfo.substr(0, firstSep);//Deco id
+					int dX = atoi(dInfo.substr(firstSep + 1, lastSep - firstSep - 1).c_str());//Deco x
+					int dY = atoi(dInfo.substr(lastSep + 1).c_str());//Deco y
+					
+					createDeco(dId, dX, dY);//Creates deco
+					
+					tok = strtok(NULL, ",\t ");//Next token
+				}
 			}
 			
 			makePict();//Makes picture
@@ -840,9 +955,12 @@ class map: public content{
 			if (getTile(x - 1, y - 1) && !getTile(x - 1, y - 1)->free && getTile(x - 1, y - 1)->layer > tile->layer) return false;
 			
 			deque<unit*>::iterator u;//Unit iterator
-			
 			for (u = units.begin(); u != units.end(); u++)//For each unit
 				if ((*u)->x == x && (*u)->y == y) return false;//If unit is in tile returns false
+				
+			deque<deco*>::iterator d;//Deco iterator
+			for (d = decos.begin(); d != decos.end(); d++)//For each deco
+				if ((*d)->x == x && (*d)->y == y) return false;//If deco is in tile returns false
 				
 			return true;//Returns true if no unit was found
 		}
@@ -905,7 +1023,12 @@ class map: public content{
 		for (i = 0; i < w * h; i++) tilesVar += "," + tiles[i].id + ":" + toString(tiles[i].layer);//Writes tile info
 		tilesVar.erase(0,1);//Deletes first comma in tiles variable
 		
+		string decosVar = "";//Decos variable content
+		for (i = 0; i < decos.size(); i++) decosVar += "," + decos[i]->id + ":" + toString(decos[i]->x) + ":" + toString(decos[i]->y);//Writes deco info
+		decosVar.erase(0,1);//Deletes first comma in decos variable
+		
 		result.setVar("tiles", tilesVar);//Sets tiles variable
+		result.setVar("decos", decosVar);//Sets decos variable
 		
 		return result;//Returns result
 	}
@@ -1010,7 +1133,7 @@ void unit::nextFrame(){
 	}
 	
 	else if (GETACT(action) == ACT_STRIKE){//If unit is striking
-		if (primary) primary->overlay.next();//Next frame for weapon animation
+		if (primary && primary->image) primary->overlay.next();//Next frame for weapon animation
 		
 		if (anims.current()->curFrame == anims.current()->duration() - 1) stop();//Stops if reached end of animation
 		
@@ -1028,6 +1151,8 @@ void unit::nextFrame(){
 		if (anims.current()->curFrame == anims.current()->duration() - 1 && parent){//If reached end of animation
 			deque<unit*>::iterator i;//Iterator for units
 			
+			action = ACT_DEAD;
+			
 			for (i = parent->units.begin(); i != parent->units.end(); i++){//For each unit in parent map
 				if (*i == this){//If unit is this
 					i = parent->units.erase(i);//Removes unit from map
@@ -1036,11 +1161,6 @@ void unit::nextFrame(){
 			}
 		}
 	}
-}
-
-//AI function
-void unit::AI(){
-	
 }
 
 //Function to load database from object
@@ -1071,13 +1191,19 @@ void loadDatabase(object o){
 			newWeapon.fromScriptObj(*i);//Loads weapon
 			weaponDb.push_back(newWeapon);//Adds weapon to database
 		}
+		
+		if (i->type == OBJTYPE_DECO){//If object is a decoration
+			deco newDeco;//New decoration
+			newDeco.fromScriptObj(*i);//Loads deco
+			decoDb.push_back(newDeco);//Adds deco to database
+		}
 	}
 }
 
 //Initialization function
 void game_init(string dbFile, string settingsFile){
 	srand(time(NULL));//Randomize
-	
+		
 	uiInit();//Initializes UI
 	image_init();//Initializes image library
 		
@@ -1085,7 +1211,7 @@ void game_init(string dbFile, string settingsFile){
 	
 	fileData f (dbFile);//File data for database
 	loadDatabase(f.objGen("db"));//Loads database
-	
+		
 	fileData s (settingsFile);//Settings file
 	object settings = s.objGen("settings");//Loads settings
 	
