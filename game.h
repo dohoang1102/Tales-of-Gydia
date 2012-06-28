@@ -6,6 +6,7 @@
 #include "error.h"
 #include "cache.h"
 #include "script.h"
+#include "expr.h"
 #include "locale.h"
 
 #include "image.h"
@@ -33,9 +34,11 @@ int DB_VARIABLEWARNING		= getErrorCode();//Non-lethal variable error in database
 #define OBJTYPE_WEAPON		"weapon"//Object type weapon
 #define OBJTYPE_UNIT		"unit"//Object type unit
 #define OBJTYPE_MAP			"map"//Object type map
+#define OBJTYPE_SEQUENCE	"sequence"//Object type sequence
+#define OBJTYPE_CAMPAIGN	"campaign"//Object type campaign
 
 #define MINIMAP_RES			4//Minimap resolution (square size)
-#define MINIMAP_USIZE		6//Minimap unit size
+#define MINIMAP_USIZE		3//Minimap unit size
 #define MINIMAP_UCOLOR_0	0x0040FFF0//Minimap unit color for side 0
 #define MINIMAP_UCOLOR_1	0xFF4000F0//Minimap unit color for side 1
 #define MINIMAP_UCOLOR_2	0x40FF00F0//Minimap unit color for side 2
@@ -64,7 +67,7 @@ int DB_VARIABLEWARNING		= getErrorCode();//Non-lethal variable error in database
 #define GETDIR(CODE)		((CODE) % 0x10)//Macro to get direction code out of code with action and direction
 
 class map;//Map class prototype
-class world;//World class prototype
+class campaign;//Campaign class prototype
 
 typedef struct {int code; string args;} order;//Order structure
 
@@ -280,6 +283,7 @@ class weapon: public content{
 	//Graphics
 	animSet overlay;//Weapon overlay (shown when striking)
 	string strikeAnim;//Player strike animation
+	int strikeFrame;//Frame of animation when unit strikes
 	
 	//Constructor
 	weapon(){
@@ -291,6 +295,7 @@ class weapon: public content{
 		damageMax = 1;
 		
 		strikeAnim = "";
+		strikeFrame = 0;
 		image = false;
 	}
 	
@@ -303,11 +308,13 @@ class weapon: public content{
 			var* damageMax = o.getVar("damageMax");//Maximum damage variable
 			object* overlay = o.getObj("overlay");//Weapon overlay object
 			var* strikeAnim = o.getVar("strikeAnim");//Strike animation variable
+			var* strikeFrame = o.getVar("strikeFrame");//Strike frame variable
 			
 			if (damageMin) this->damageMin = damageMin->intValue();//Gets minimum damage
 			if (damageMax) this->damageMax = damageMax->intValue();//Gets maximum damage
 			if (overlay){ this->overlay.fromScriptObj(*overlay); image = true;}//Loads overlay
 			if (strikeAnim) this->strikeAnim = strikeAnim->value;//Gets strike animation
+			if (strikeFrame) this->strikeFrame = strikeFrame->intValue();//Gets strike frame
 		}
 	}
 	
@@ -345,6 +352,7 @@ class unit: public content{
 	
 	//Status
 	int hits, maxHits;//Unit hits and max hits
+	int sight;//Unit sight
 	
 	//Fighting
 	weapon *primary;//Primary melee weapon
@@ -369,6 +377,7 @@ class unit: public content{
 		
 		hits = 1;
 		maxHits = 1;
+		sight = 5;
 		
 		primary = NULL;
 	}
@@ -392,9 +401,11 @@ class unit: public content{
 			
 			object* anims = o.getObj("anims");//AnimSet object
 			var* hits = o.getVar("hits");//Hits variable
+			var* sight = o.getVar("sight");//Sight variable
 			
 			if (anims) this->anims.fromScriptObj(*anims);//Loads animations
 			if (hits) this->maxHits = hits->intValue();//Gets max hits
+			if (sight) this->sight = sight->intValue();//Gets sight
 			
 			this->anims.setAnim("idle_s");//Turns south
 			this->hits = this->maxHits;//Sets hits
@@ -409,6 +420,12 @@ class unit: public content{
 	
 	//Walking function
 	void walk(int);
+	
+	//Turning function (faces given direction)
+	void turn(int direction){
+		action = GETACODE(ACT_IDLE, direction);//Sets action code
+		anims.setAnim("idle_" + dirToString(direction));//Sets animation
+	}
 	
 	//Striking function
 	void strike(){
@@ -456,6 +473,9 @@ class unit: public content{
 	void giveWeapon_primary(string id){
 		primary = get(&weaponDb, id);//Sets weapon
 	}
+	
+	//Function to make AI move (prototype)
+	void AI();
 };
 
 //Function determining if an unit comes before another one (lower y or equal y and lower x)
@@ -473,11 +493,19 @@ double uDist(unit* a, unit* b){
 //Controller class
 class controller{
 	public:
-	unit* u;//Controlled unit
+	deque<unit*> units;//Controlled units
+	int AI_current;//Current AI unit
+	
+	//Constructor
+	controller(){
+		AI_current = 0;
+	}
 	
 	//Function to give order to all controlled units
 	void giveOrder(order o){
-		u->execOrder(o);
+		deque<unit*>::iterator u;//Unit iterator
+		for (u = units.begin(); u != units.end(); u++)//For each unit
+			(*u)->execOrder(o);
 	}
 	
 	//Function to get input from keyboard
@@ -498,7 +526,52 @@ class controller{
 	
 	//Function to get if all controlled units are ready
 	bool ready(){
-		return u->ready();
+		deque<unit*>::iterator u;//Unit iterator
+		for (u = units.begin(); u != units.end(); u++)//For each unit
+			if (!(*u)->ready()) return false;//Returns false if unit is not ready
+		
+		return true;//Returns true if units were all ready
+	}
+	
+	//Function to get if all controlled units are ready or dead
+	bool readyOrDead(){
+		deque<unit*>::iterator u;//Unit iterator
+		for (u = units.begin(); u != units.end(); u++)//For each unit
+			if (!(*u)->ready() && (*u)->action != ACT_DEAD) return false;//Returns false if unit is neither ready nor dead
+		
+		return true;//Returns true if units were all ready
+	}
+	
+	//Function to add controlled unit
+	void addUnit(unit* u){
+		units.push_back(u);//Adds unit to controlled
+	}
+	
+	//Function to run units' AI functions
+	bool AI(){
+		if (units.size() == 0) return true;//Returns true if there are no units
+		
+		if (AI_current >= 0 || units[AI_current - 1]->ready() || units[AI_current - 1]->action == ACT_DEAD){//If current unit is the first or the previous is ready or dead
+			if (AI_current == units.size()){//If that was last unit
+				AI_current = 0;//Goes back to first unit
+				return true;//Returns true
+			}
+			
+			else {//Else
+				units[AI_current]->AI();//Execs current unit's AI function
+				AI_current++;//Next unit
+				return false;//Returns false
+			}
+		}
+	}
+	
+	//Function returning if there are units to be controlled
+	bool valid(){
+		deque<unit*>::iterator i;//Iterator
+		for (i = units.begin(); i != units.end(); i++)//For each unit
+			if ((*i)->ready()) return true;//If unit is ready returns true
+			
+		return false;//Returns false
 	}
 };
 
@@ -802,10 +875,10 @@ class map: public content{
 		if (!c){//If no centre coords were given
 			offset = {x - pict->w / 2, y - pict->h / 2};//Offset rectangle
 		}
-		
 		else {//Else
 			offset = {x - tilesSide * c->x - c->dX - tilesSide / 2, y - tilesSide * c->y - c->dY - tilesSide / 2};
 		}
+		
 		SDL_Rect o = offset;//Copies offset rectangle (it gets modified by SDL_Blit, but will be still needed in unit and deco prints)
 		SDL_BlitSurface(pict, NULL, target, &o);//Prints picture
 		
@@ -813,7 +886,7 @@ class map: public content{
 		deque<deco*>::iterator d = decos.begin();//Deco iterator
 		
 		while (u != units.end() || d != decos.end()){//While there's still something to print
-			if (u != units.end() && compare_unitDeco(*u, *d)){//If unit is before deco
+			if (u != units.end() && (d == decos.end() || compare_unitDeco(*u, *d))){//If unit is before deco
 				(*u)->print(target, offset.x + tilesSide * (*u)->x + tilesSide / 2, offset.y + tilesSide * (*u)->y + tilesSide / 2);//Prints unit
 				u++;//Next unit
 			}
@@ -929,7 +1002,7 @@ class map: public content{
 				}
 			}
 			
-			makePict();//Makes picture
+			makePict(true);//Makes picture
 			makeMmap();//Makes minimap
 		}
 		
@@ -1032,9 +1105,230 @@ class map: public content{
 		
 		return result;//Returns result
 	}
+	
+	//Function to get unit by name
+	unit* getUnit_name(string name){
+		deque<unit*>::iterator i;//Unit iterator
+		
+		for (i = units.begin(); i != units.end(); i++)//For each unit
+			if ((*i)->name == name) return *i;//Returns unit if name is matching
+			
+		return NULL;//Returns null if no unit was found
+	}
 } activeMap;
 
 list <map> mapDb;//Maps database
+
+//Script class
+class script{
+	public:
+	deque<string> cmds;//Script instructions in order of execution
+	
+	//Function to load from string
+	void fromString(string source){
+		char* cString = (char*) source.c_str();//C-string version of source
+		char* tok = strtok(cString, ",");//First token
+		
+		while (tok){//While there are tokens left
+			cmds.push_back(string(tok));//Adds token to instructions
+			tok = strtok(NULL, ",");//Next token
+		}
+	}
+	
+	//Execution function
+	bool exec(campaign* c);
+};
+
+//Sequence class
+class sequence: public content{
+	public:
+	script begin;//Begin script, executed when starting sequence
+	script check;//Check script, executed on each frame to check if sequence has reached its end
+	script end;//End script, executed when finishing sequence
+	
+	//Function to load from script object
+	void fromScriptObj(object o){
+		if (o.type == OBJTYPE_SEQUENCE){//If type is matching
+			content::fromScriptObj(o);//Loads base content data
+			
+			var* begin = o.getVar("script_begin");//Begin script variable
+			var* check = o.getVar("script_check");//Check script variable
+			var* end = o.getVar("script_end");//End script variable
+			
+			if (begin) this->begin.fromString(begin->value);//Gets begin script
+			if (check) this->check.fromString(check->value);//Gets check script
+			if (end) this->end.fromString(end->value);//Gets end script
+		}
+	}
+};
+
+//Campaign class
+class campaign: public content{
+	public:
+	map* m;//Campaign map
+	
+	controller player;//Player controller
+	controller ai;//AI controller
+	int turn;//Current turn
+	
+	list<sequence> seq;//Sequences of campaign, in order of execution
+	int curSequence;//Current sequence index
+	
+	//Constructor
+	campaign(){
+		m = NULL;
+		curSequence = 0;
+		turn = 0;
+	}
+	
+	//Function to load from script object
+	void fromScriptObj(object o){
+		if (o.type == OBJTYPE_CAMPAIGN){//If type is matching
+			content::fromScriptObj(o);//Loads base content data
+			
+			var* m = o.getVar("map");//Map variable
+			
+			if (m) this->m = get(&mapDb, m->value);//Gets map
+			
+			deque<object>::iterator i;//Sub-object iterator
+			for (i = o.o.begin(); i != o.o.end(); i++){//For each sub-object in given object
+				if (i->type == OBJTYPE_SEQUENCE){//If object is a sequence
+					sequence newSeq;//New sequence
+					newSeq.fromScriptObj(*i);//Loads sequence
+					seq.push_back(newSeq);//Adds sequence to campaign sequences
+				}
+			}
+		}
+	}
+	
+	//Printing function
+	void print(SDL_Surface* target){
+		if (m){//If map is valid
+			if (player.units.size() > 0)//If there's at least one controlled unit
+				m->print(target, target->w / 2, target->h / 2, player.units[0]);//Prints map centered on first controlled unit
+			
+			else m->print (target, target->w / 2, target->h / 2);//Else prints map normally
+		}
+	}
+	
+	//Next frame function
+	void nextFrame(){
+		if (m) m->nextFrame();//Goes to map next frame if possible
+	}
+	
+	//Turn moves function
+	void turnMoves(){
+		if (turn == 0 && player.ready()){//If player turn
+			player.getInput();//Gets player input
+			
+			if (!player.ready() && ai.valid()) turn++;//Goes to AI turn if moved
+		}
+		
+		if (turn == 1 && player.ready() && ai.readyOrDead() && ai.AI()) turn = 0;//Goest to player turn if all AI units have been moved
+	}
+	
+	//Campaign setup function
+	void setup(){
+		curSequence = 0;//Sets first sequence
+		if (seq.size() > 0) seq.front().begin.exec(this);//Execs first sequence beginning script
+	}
+	
+	//Variable getting function (not as in script.h!)
+	string getVar(string id){
+		if (player.units.size() > 0){
+			if (id == "player.id") return player.units[0]->id;
+			if (id == "player.name") return player.units[0]->name;
+			if (id == "player.x") return toString(player.units[0]->x);
+			if (id == "player.y") return toString(player.units[0]->y);
+			if (id == "player.hits") return toString(player.units[0]->hits);
+		}
+	}
+};
+
+list<campaign> campaignDb;//Campaign database
+
+//Execution function
+bool script::exec(campaign* c){
+	if (!c || !c->m) return false;//Exits function if no target was given
+	
+	int i;//Counter
+	bool result = true;//Script result (false on errors or false comparisons)
+		
+	for (i = 0; i < cmds.size(); i++){//For each instruction
+		deque<string> tokens;//Instruction tokens
+		char* cString = (char*) cmds[i].c_str();//C-string version of instruction
+		char* tok = strtok(cString, "\t ");//First token
+		
+		while (tok){//While there are tokens left
+			tokens.push_back(string(tok));//Adds token
+			tok = strtok(NULL, "\t ");//Next token
+		}
+		
+		if (tokens[0] == "createUnit" && tokens.size() >= 6){//Create unit instruction
+			string uId = tokens[1];//Unit id
+			string uName = tokens[2];//Unit name
+			int uX = atoi(tokens[3].c_str());//Unit x
+			int uY = atoi(tokens[4].c_str());//Unit y
+			int uSide = atoi(tokens[5].c_str());//Unit side
+			
+			unit* u = c->m->createUnit(uId, uName, uX, uY, uSide);//Creates unit in map
+			if (u && tokens.size() >= 7) u->giveWeapon_primary(tokens[6]);//Gives weapon if defined
+			if (u && tokens.size() >= 8) u->turn(atoi(tokens[7].c_str()));//Picks direction if defined
+			
+			if (!u) result = false;//Updates result
+		}
+		
+		if (tokens[0] == "giveWeapon_primary" && tokens.size() >= 3){//Give primary weapon instruction
+			unit* u = c->m->getUnit_name(tokens[1]);//Gets unit
+			if (u) u->giveWeapon_primary(tokens[2]);//Gives weapon to unit
+			
+			if (!u) result = false;//Updates result
+		}
+		
+		if (tokens[0] == "giveControl" && tokens.size() >= 2){//Give control to player instruction
+			unit* u = c->m->getUnit_name(tokens[1]);//Gets unit
+			if (u) c->player.addUnit(u);//Gives unit to player
+			
+			if (!u) result = false;//Updates result
+		}
+		
+		if (tokens[0] == "createPlayer" && tokens.size() >= 6){//Create unit controlled by player instruction
+			string uId = tokens[1];//Unit id
+			string uName = tokens[2];//Unit name
+			int uX = atoi(tokens[3].c_str());//Unit x
+			int uY = atoi(tokens[4].c_str());//Unit y
+			int uSide = atoi(tokens[5].c_str());//Unit side
+			
+			unit* u = c->m->createUnit(uId, uName, uX, uY, uSide);//Creates unit in map
+			if (u){//If created successfully
+				if (tokens.size() >= 7) u->giveWeapon_primary(tokens[6]);//Gives weapon if defined
+				if (tokens.size() >= 8) u->turn(atoi(tokens[7].c_str()));//Picks direction if defined
+				c->player.addUnit(u);//Gives control to player
+			}
+			
+			if (!u) result = false;//Updates result
+		}
+		
+		if (tokens[0] == "createAI" && tokens.size() >= 6){//Create unit controlled by AI
+			string uId = tokens[1];//Unit id
+			string uName = tokens[2];//Unit name
+			int uX = atoi(tokens[3].c_str());//Unit x
+			int uY = atoi(tokens[4].c_str());//Unit y
+			int uSide = atoi(tokens[5].c_str());//Unit side
+			
+			unit* u = c->m->createUnit(uId, uName, uX, uY, uSide);//Creates unit in map
+			if (u){//If created successfully
+				if (tokens.size() >= 7) u->giveWeapon_primary(tokens[6]);//Gives weapon if defined
+				if (tokens.size() >= 8) u->turn(atoi(tokens[7].c_str()));//Picks direction if defined
+				c->ai.addUnit(u);//Gives control to player
+			}
+			
+			if (!u) result = false;//Updates result
+		}
+	}
+	
+	return result;//Returns result
+}
 
 //Walking function
 void unit::walk(int direction){
@@ -1043,32 +1337,28 @@ void unit::walk(int direction){
 		switch (direction){//According to direction
 			case NORTH:
 			if (!parent->isFree(x, y - 1)){
-				action = GETACODE(ACT_IDLE, direction);
-				stop();
+				turn(NORTH);
 				return;
 			}
 			break;
 			
 			case WEST:
 			if (!parent->isFree(x - 1, y)){
-				action = GETACODE(ACT_IDLE, direction);
-				stop();
+				turn(WEST);
 				return;
 			}
 			break;
 			
 			case SOUTH:
 			if (!parent->isFree(x, y + 1)){
-				action = GETACODE(ACT_IDLE, direction);
-				stop();
+				turn(SOUTH);
 				return;
 			}
 			break;
 			
 			case EAST:
 			if (!parent->isFree(x + 1, y)){
-				action = GETACODE(ACT_IDLE, direction);
-				stop();
+				turn(EAST);
 				return;
 			}
 			break;
@@ -1132,12 +1422,12 @@ void unit::nextFrame(){
 		}
 	}
 	
-	else if (GETACT(action) == ACT_STRIKE){//If unit is striking
-		if (primary && primary->image) primary->overlay.next();//Next frame for weapon animation
+	else if (GETACT(action) == ACT_STRIKE && primary){//If unit is striking
+		if (primary->image) primary->overlay.next();//Next frame for weapon animation
 		
 		if (anims.current()->curFrame == anims.current()->duration() - 1) stop();//Stops if reached end of animation
 		
-		if (anims.current()->curFrame == floor(anims.current()->duration() / 2) - 1 && parent){//At half striking animation
+		if (anims.current()->curFrame == primary->strikeFrame && parent){//At half striking animation
 			switch (GETDIR(action)){//According to direction
 				case NORTH: parent->damage(x, y - 1, primary->damage()); break;
 				case WEST: parent->damage(x - 1, y, primary->damage()); break;
@@ -1160,6 +1450,38 @@ void unit::nextFrame(){
 				}
 			}
 		}
+	}
+}
+
+//Function to make unit AI move
+void unit::AI(){
+	if (action == ACT_DEAD) return;//Exits if unit is dead
+	
+	if (parent){//If there's a parent scenario
+		//Picks closest unit
+		unit* closest = NULL;//Pointer to closest emey unit
+		deque<unit*>::iterator u;//Unit iterator
+		
+		for (u = parent->units.begin(); u != parent->units.end(); u++)//For each unit in parent scenario
+			if (*u != this && (*u)->side != side && (!closest || uDist(this, *u) < uDist(this, closest))) closest = *u;//Sets closest unit
+
+		if (!closest || uDist(this, closest) > sight) return;//Exits if didn't found any appropriate unit or unit was too far to be seen
+		
+		if (uDist(closest, this) == 1){//If closest unit is in adjacent tile
+			//Faces unit
+			if (closest->y < y) turn(NORTH);
+			else if (closest->x < x) turn(WEST);
+			else if (closest->y > y) turn(SOUTH);
+			else if (closest->x > x) turn(EAST);
+			
+			strike();//Strikes
+		}
+		
+		//Gives walking orders
+		if (closest->y < y && parent->isFree(x, y - 1)) walk(NORTH);
+		else if (closest->x < x && parent->isFree(x - 1, y)) walk(WEST);
+		else if (closest->y > y && parent->isFree(x, y + 1)) walk(SOUTH);
+		else if (closest->x > x && parent->isFree(x + 1, y)) walk(EAST);
 	}
 }
 
@@ -1196,6 +1518,12 @@ void loadDatabase(object o){
 			deco newDeco;//New decoration
 			newDeco.fromScriptObj(*i);//Loads deco
 			decoDb.push_back(newDeco);//Adds deco to database
+		}
+		
+		if (i->type == OBJTYPE_CAMPAIGN){//If object is a campaign
+			campaign newCampaign;//New campaign
+			newCampaign.fromScriptObj(*i);//Loads campaign
+			campaignDb.push_back(newCampaign);//Adds campaign
 		}
 	}
 }
