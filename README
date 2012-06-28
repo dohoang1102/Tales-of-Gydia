@@ -1,4 +1,5 @@
----Tales of Solgonya repository---
+Tales of Solgonya repository
+----------------------------
 
 1. ABOUT
 Tales of Solgonya will be a fantasy turn based tactical RPG taking part in Liberated Pixel Cup (see http://lpc.opengameart.org)
@@ -6,7 +7,7 @@ Tales of Solgonya will be a fantasy turn based tactical RPG taking part in Liber
 2. LICENSING
 All code and .cfg files are released under GPL v3.0 license (see http://www.gnu.org/licenses/gpl-3.0.html).
 
-At the moment, all image files are taken from base assets of Liberated Pixel Cup (see http://lpc.opengameart.org/static/lpc-style-guide/assets.html), except file data/images/units/baseMale_thrust.png, which is taken from http://opengameart.org/forumtopic/progress-pic-thread-show-us-what-youre-working-on?page=1 and was made by wulax (wulax@opengameart: http://opengameart.org/users/wulax); since no license is provided (yet) for that file, it is not intended to be used anywhere else.
+At the moment, all image files are taken from base assets of Liberated Pixel Cup (see http://lpc.opengameart.org/static/lpc-style-guide/assets.html), except file data/images/units/baseMale_thrust.png, which is taken from http://opengameart.org/forumtopic/progress-pic-thread-show-us-what-youre-working-on?page=1 and was made by wulax (wulax@opengameart: http://opengameart.org/users/wulax) and files data/images/tileset/sand.png and sand+water.png, taken from http://opengameart.org/forumtopic/progress-pic-thread-show-us-what-youre-working-on?page=2 and were made by daneeklu (daneeklu@opengameart: http://opengameart.org/users/daneeklu); since no license is provided (yet) for those files, I'm not sure about how those files can be redistributed, so please don't take them from here but from their original page, linked above.
 
 3. FILE INFO
 Source files are in repository root. I know that code might be a little messy and unclear somewhere, but I haven't found time yet to sort it a little bit :) By the way, I tried to put comments wherever I could (and sorry if they aren't in correct English - that's not my native language...)
@@ -24,9 +25,21 @@ Just build the test.cpp source file - it includes all the headers and runs map d
   - SDL_ttf.dll
   - zlib1.dll
 
-The file imgCFG.cpp runs a small command-line utility to generate a .cfg file from a spritesheet, describing all frames of the sheet in the unnamed script language of above.
+The file imgCFG.cpp contains a small command-line utility to generate a .cfg file from a spritesheet, describing all frames of the sheet in the unnamed script language of above.
 
-The game has not been tested on any OS apart from Windows XP (my fault, sorry :)) but as far as I know should be running on Ubuntu, Windows Vista and Seven (hopefully...)
+The file worldEditor.cpp contains the map editor; I have developed it quickly, so it has a raw command line interface. The prompt accepts following commands:
+  - new <width> <height> <base tile>: creates a new map of size <width> x <height> filled with tile with id <base tile> on layer 0
+  - fill <tile> <layer>: fills map with tile <tile> on layer <layer>
+  - pick <tile> <layer>: picks as brush tile <tile> on layer <layer> (left click: paint, right click: pick terrain, middle click: bucket fill)
+  - deco <deco>: picks as brush decoration <deco> (left click: paint,  right click: erase)
+  - open <map>: opens map with name <map> (opens map only as they were in database when editor started)
+  - save <path>: saves map file in path <path> (relative to executable directory)
+  - id <id>: sets map id
+  - author <author>: sets map author
+  - desc <description>: sets map short description
+Additional features (such as a real UI) might come in future updates, but at the moment I'm focused on the game itself.
+
+The game has not been tested (yet) on any OS apart from Windows XP (my fault, sorry :)) but as far as I know should be running on Ubuntu, Windows Vista and Seven (hopefully...)
 
 Enjoy!
 Buch
