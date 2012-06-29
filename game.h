@@ -48,6 +48,11 @@ int DB_VARIABLEWARNING		= getErrorCode();//Non-lethal variable error in database
 
 #define MOTIONSTEP			4//Pixels of motion for each frame when units walk
 
+//Script results
+#define VOID				-1
+#define FALSE				0
+#define TRUE				1
+
 //Directions
 #define NORTH				0//North
 #define WEST				1//West
@@ -76,6 +81,15 @@ int tilesSide = 32;//Side of each tile of the map
 TTF_Font* globalFont = NULL;//Global font
 
 int turn = 0;
+
+deque<op> ops_bool;//Boolean script operators
+
+//Boolean operators functions
+string ops_bool_equal(string a, string b){ return toString(a == b); }
+string ops_bool_greater(string a, string b){ return toString(atoi(a.c_str()) > atoi(b.c_str())); }
+string ops_bool_less(string a, string b){ return toString(atoi(a.c_str()) < atoi(b.c_str())); }
+string ops_bool_and(string a, string b){ return toString(atoi(a.c_str()) && atoi(b.c_str())); }
+string ops_bool_or(string a, string b){ return toString(atoi(a.c_str()) || atoi(b.c_str())); }
 
 //Function to convert direction in string
 string dirToString (int dir){
@@ -590,7 +604,7 @@ class map: public content{
 	
 	SDL_Surface* pict;//Picture of the map
 	SDL_Surface* mmap;//Picture of the minimap
-	SDL_Surface* tmap;//Picture of the transitions mask
+	SDL_Surface* sightMask;//Picture of sight mask
 	
 	deque<unit*> units;//Units on map
 	deque<deco*> decos;//Decorations on map
@@ -604,6 +618,7 @@ class map: public content{
 		tiles = NULL;
 		pict = NULL;
 		mmap = NULL;
+		sightMask = NULL;
 		
 		resize(1,1);
 	}
@@ -628,7 +643,6 @@ class map: public content{
 		
 		pict = SDL_CreateRGBSurface(SDL_SWSURFACE, w * tilesSide, h * tilesSide, 32, 0, 0, 0, 0);//Creates picture
 		mmap = SDL_CreateRGBSurface(SDL_SWSURFACE, w * MINIMAP_RES, h * MINIMAP_RES, 32, 0, 0, 0, 0);//Creates minimap
-		tmap = SDL_CreateRGBSurface(SDL_SWSURFACE, w * tilesSide, h * tilesSide, 32, 0, 0, 0, 0);//Creates transitions map
 	}
 	
 	//Function to get map width
@@ -867,6 +881,17 @@ class map: public content{
 		}
 	}
 	
+	//Function to make hero sight mask
+	void makeSightMask(unit* u, int w, int h){
+		if (sightMask) SDL_FreeSurface(sightMask);//Frees mask if existing
+		
+		sightMask = SDL_CreateRGBSurface(SDL_SWSURFACE | SDL_SRCALPHA, w, h, 32, 0, 0, 0, 0);//Makes surface
+		filledCircleColor(sightMask, w / 2, h / 2, u->sight * tilesSide, 0xFFFFFFFF);//Draws circle
+		
+		SDL_SetColorKey(sightMask, SDL_SRCCOLORKEY, 0xFFFFFF);
+		SDL_SetAlpha(sightMask, SDL_SRCALPHA, 64);
+	}
+	
 	//Function to print picture of the map
 	void print(SDL_Surface* target, int x, int y, unit* c = NULL){
 		SDL_Rect offset;//Offset rectangle
@@ -887,7 +912,7 @@ class map: public content{
 		
 		while (u != units.end() || d != decos.end()){//While there's still something to print
 			if (u != units.end() && (d == decos.end() || compare_unitDeco(*u, *d))){//If unit is before deco
-				(*u)->print(target, offset.x + tilesSide * (*u)->x + tilesSide / 2, offset.y + tilesSide * (*u)->y + tilesSide / 2);//Prints unit
+				if (c && uDist(c, *u) < c->sight) (*u)->print(target, offset.x + tilesSide * (*u)->x + tilesSide / 2, offset.y + tilesSide * (*u)->y + tilesSide / 2);//Prints unit
 				u++;//Next unit
 			}
 			
@@ -896,6 +921,8 @@ class map: public content{
 				d++;//Next deco
 			}
 		}
+		
+		if (sightMask) SDL_BlitSurface(sightMask, NULL, target, NULL);//Prints sight mask
 	}
 	
 	//Function to print minimap
@@ -1136,7 +1163,7 @@ class script{
 	}
 	
 	//Execution function
-	bool exec(campaign* c);
+	int exec(campaign* c);
 };
 
 //Sequence class
@@ -1171,7 +1198,7 @@ class campaign: public content{
 	controller ai;//AI controller
 	int turn;//Current turn
 	
-	list<sequence> seq;//Sequences of campaign, in order of execution
+	deque<sequence> seq;//Sequences of campaign, in order of execution
 	int curSequence;//Current sequence index
 	
 	//Constructor
@@ -1211,8 +1238,19 @@ class campaign: public content{
 		}
 	}
 	
+	//Next sequence function
+	void nextSeq(){
+		seq[curSequence].end.exec(this);//Runs current sequence end script
+		
+		if (curSequence < seq.size() - 1){//If there's still a sequence to run
+			curSequence++;//Next sequence
+			seq[curSequence].begin.exec(this);//Runs begin script
+		}
+	}
+	
 	//Next frame function
 	void nextFrame(){
+		if (seq[curSequence].check.exec(this) == TRUE) nextSeq();//Runs control script and moves to next sequence if needed
 		if (m) m->nextFrame();//Goes to map next frame if possible
 	}
 	
@@ -1231,38 +1269,41 @@ class campaign: public content{
 	void setup(){
 		curSequence = 0;//Sets first sequence
 		if (seq.size() > 0) seq.front().begin.exec(this);//Execs first sequence beginning script
+		
+		if (player.units.size() > 0) m->makeSightMask(player.units[0], window->w, window->h);//Makes sight mask
 	}
 	
-	//Variable getting function (not as in script.h!)
-	string getVar(string id){
+	//Function to get a deque of campaign variables
+	deque<var> getVars(){
+		deque<var> result;//Result
+		
 		if (player.units.size() > 0){
-			if (id == "player.id") return player.units[0]->id;
-			if (id == "player.name") return player.units[0]->name;
-			if (id == "player.x") return toString(player.units[0]->x);
-			if (id == "player.y") return toString(player.units[0]->y);
-			if (id == "player.hits") return toString(player.units[0]->hits);
+			var pId ("player.id", player.units[0]->id);
+			var pName ("player.name", player.units[0]->name);
+			var pX ("player.x", player.units[0]->x);
+			var pY ("player.y", player.units[0]->y);
+			
+			result.push_back(pId);
+			result.push_back(pName);
+			result.push_back(pX);
+			result.push_back(pY);
 		}
+		
+		return result;//Returns result
 	}
 };
 
 list<campaign> campaignDb;//Campaign database
 
 //Execution function
-bool script::exec(campaign* c){
+int script::exec(campaign* c){
 	if (!c || !c->m) return false;//Exits function if no target was given
 	
 	int i;//Counter
-	bool result = true;//Script result (false on errors or false comparisons)
+	int result = VOID;//Script result (false on errors)
 		
-	for (i = 0; i < cmds.size(); i++){//For each instruction
-		deque<string> tokens;//Instruction tokens
-		char* cString = (char*) cmds[i].c_str();//C-string version of instruction
-		char* tok = strtok(cString, "\t ");//First token
-		
-		while (tok){//While there are tokens left
-			tokens.push_back(string(tok));//Adds token
-			tok = strtok(NULL, "\t ");//Next token
-		}
+	for (i = 0; i < cmds.size(); i++){//For each instruction		
+		deque<string> tokens = tokenize(cmds[i], "\t ");
 		
 		if (tokens[0] == "createUnit" && tokens.size() >= 6){//Create unit instruction
 			string uId = tokens[1];//Unit id
@@ -1274,25 +1315,19 @@ bool script::exec(campaign* c){
 			unit* u = c->m->createUnit(uId, uName, uX, uY, uSide);//Creates unit in map
 			if (u && tokens.size() >= 7) u->giveWeapon_primary(tokens[6]);//Gives weapon if defined
 			if (u && tokens.size() >= 8) u->turn(atoi(tokens[7].c_str()));//Picks direction if defined
-			
-			if (!u) result = false;//Updates result
 		}
 		
-		if (tokens[0] == "giveWeapon_primary" && tokens.size() >= 3){//Give primary weapon instruction
+		else if (tokens[0] == "giveWeapon_primary" && tokens.size() >= 3){//Give primary weapon instruction
 			unit* u = c->m->getUnit_name(tokens[1]);//Gets unit
 			if (u) u->giveWeapon_primary(tokens[2]);//Gives weapon to unit
-			
-			if (!u) result = false;//Updates result
 		}
 		
-		if (tokens[0] == "giveControl" && tokens.size() >= 2){//Give control to player instruction
+		else if (tokens[0] == "giveControl" && tokens.size() >= 2){//Give control to player instruction
 			unit* u = c->m->getUnit_name(tokens[1]);//Gets unit
 			if (u) c->player.addUnit(u);//Gives unit to player
-			
-			if (!u) result = false;//Updates result
 		}
 		
-		if (tokens[0] == "createPlayer" && tokens.size() >= 6){//Create unit controlled by player instruction
+		else if (tokens[0] == "createPlayer" && tokens.size() >= 6){//Create unit controlled by player instruction
 			string uId = tokens[1];//Unit id
 			string uName = tokens[2];//Unit name
 			int uX = atoi(tokens[3].c_str());//Unit x
@@ -1305,11 +1340,9 @@ bool script::exec(campaign* c){
 				if (tokens.size() >= 8) u->turn(atoi(tokens[7].c_str()));//Picks direction if defined
 				c->player.addUnit(u);//Gives control to player
 			}
-			
-			if (!u) result = false;//Updates result
 		}
 		
-		if (tokens[0] == "createAI" && tokens.size() >= 6){//Create unit controlled by AI
+		else if (tokens[0] == "createAI" && tokens.size() >= 6){//Create unit controlled by AI
 			string uId = tokens[1];//Unit id
 			string uName = tokens[2];//Unit name
 			int uX = atoi(tokens[3].c_str());//Unit x
@@ -1322,8 +1355,21 @@ bool script::exec(campaign* c){
 				if (tokens.size() >= 8) u->turn(atoi(tokens[7].c_str()));//Picks direction if defined
 				c->ai.addUnit(u);//Gives control to player
 			}
+		}
+		
+		else if (tokens[0] == "if" && tokens.size() >= 2){//If statement
+			string s = "";//Expression
+			int j;//Counter
+			for (j = 1; j < tokens.size(); j++) s += tokens[j] + " ";//Adds each token to string
 			
-			if (!u) result = false;//Updates result
+			string result = expr(s, &ops_bool, &c->getVars());//Calculates expression
+			if (!atoi(result.c_str())) i++;//Skips next instruction if statement is false
+		}
+		
+		else if (tokens[0] == "return" && tokens.size() >= 2){//Return statement
+			if (tokens[1] == "true") return TRUE;
+			else if (tokens[1] == "false") return FALSE;
+			else return VOID;
 		}
 	}
 	
@@ -1544,6 +1590,19 @@ void game_init(string dbFile, string settingsFile){
 	object settings = s.objGen("settings");//Loads settings
 	
 	if (settings.getVar("font_global")) globalFont = TTF_OpenFont(settings.getVar("font_global")->value.c_str(), 12);//Opens global font
+	
+	//Sets operators
+	op bool_equal ("=", 1, ops_bool_equal);
+	op bool_greater (">", 1, ops_bool_greater);
+	op bool_less ("<", 1, ops_bool_less);
+	op bool_and ("&", 0, ops_bool_and);
+	op bool_or ("|", 0, ops_bool_or);
+	
+	ops_bool.push_back(bool_equal);
+	ops_bool.push_back(bool_greater);
+	ops_bool.push_back(bool_less);
+	ops_bool.push_back(bool_and);
+	ops_bool.push_back(bool_or);
 }
 
 #endif

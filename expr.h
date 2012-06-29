@@ -43,22 +43,27 @@ op* getOp(string sign, int priority, deque<op> *operators){
 }
 
 //Expression solving function
-//Takes the expression s, the list of available operators and a function to get variables value
-string expr(string s, deque<op> *operators, string (*getVar)(string) = NULL){
-	char* cString = (char*) s.c_str();//C-string version of source
-	char* tok = strtok(cString, "\t ");//First token
-	deque<string> tokens;//String tokens
+//Takes the expression source, the list of available operators and a pointer to deque of variables
+string expr(string source, deque<op> *operators, deque<var> *vars = NULL){
+	string s (source);//Copies string
 	
-	while (tok){//While there are tokens left
-		tokens.push_back(tok);//Adds token to deque
-		tok = strtok(NULL, "\t ");//Next token
-	}
-	
+	deque<string> tokens = tokenize(s, "\t ");//String tokens
+		
 	sort(operators->begin(), operators->end(), opCompare);//Sorts operators by priority
 	
 	int i;//Counter
-	for (i = 0; i < tokens.size(); i++){//For each token
-		if (tokens[i][0] == '$' && getVar) tokens[i] = getVar(tokens[i].substr(1));//Replaces token with variable value
+	if (vars){//If there's a variable deque
+		for (i = 0; i < tokens.size(); i++){//For each token
+			if (tokens[i][0] == '$'){//If token is a variable
+				int j;//Counter
+				for (j = 0; j < vars->size(); j++){//For each variable
+					if ((*vars)[j].name == tokens[i].substr(1)){//If var matches
+						tokens[i] = (*vars)[j].value;//Sets token
+						break;//Exits loop
+					}
+				}
+			}
+		}
 	}
 	
 	int curPriority;//Current priority
@@ -71,10 +76,11 @@ string expr(string s, deque<op> *operators, string (*getVar)(string) = NULL){
 				for (j = 0; j < i; j++) left += tokens[j] + " ";//Fills left side
 				for (j = i + 1; j < tokens.size(); j++) right += tokens[j] + " ";//Fills right side
 				
-				return getOp(tokens[i], curPriority, operators)->func(expr(left, operators, getVar), expr(right, operators, getVar));//Returns result
+				string result = getOp(tokens[i], curPriority, operators)->func(expr(left, operators, vars), expr(right, operators, vars));//Calculates result
+				return result;//Returns result
 			}
 		}
 	}
 	
-	return s;//Returns plain string if couldn't do anything
+	return tokens[0];//Returns plain string if couldn't do anything
 }

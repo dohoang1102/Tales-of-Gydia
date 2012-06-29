@@ -36,6 +36,26 @@ class var;//Variable class prototype
 class object;//Object class prototype
 class fileData;//File data class prototype
 
+//Function to get a string deque of string tokens
+deque <string> tokenize(string source, string delimiters){
+	deque<string> result;//Result
+	
+	char *s = new char [source.size() + 1];
+	char *d = new char [delimiters.size() + 1];
+	
+	strcpy (s, source.c_str());
+	strcpy (d, delimiters.c_str());
+	
+	char *tokPtr = strtok(s, d);//First token
+	
+	while (tokPtr != NULL){//While there are tokens left
+		result.push_back(string(tokPtr));//Adds token to result
+		tokPtr = strtok(NULL,d);//Next token
+	}
+	
+	return result;//Returns result
+}
+
 //Function to convert any data to string
 template <class type> string toString(type t){
 	stringstream s;
