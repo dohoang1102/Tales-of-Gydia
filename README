@@ -9,36 +9,12 @@ All code and .cfg files are released under GPL v3.0 license (see http://www.gnu.
 
 Most of the image files inside folder data\images are taken from wulax's LPC entry (http://opengameart.org/forumtopic/progress-pic-thread-show-us-what-youre-working-on?page=3); the tilesets sand and sand+water were made by daneeklu (http://opengameart.org/forumtopic/progress-pic-thread-show-us-what-youre-working-on?page=2); the other images come from LPC base assets; all this stuff should be licensed under GNU GPL, as described by LPC rules, though I don't know if authors want to have additional licenses.
 
-3. FILE INFO
-Source files are in repository root. I know that code might be a little messy and unclear somewhere, but I haven't found time yet to sort it a little bit :) By the way, I tried to put comments wherever I could (and sorry if they aren't in correct English - that's not my native language...)
+3. RUNNING THE GAME
+WINDOWS USERS: just download https://sourceforge.net/projects/talesofgydia/files/latest/download?source=files, extract archive and launch test.exe
 
-Data folder contains images, fonts (actually just one) and content files (under data\cfg). Content files are written in a small, name-less scripting language of mine - I promise I'll write a tutorial about it some day...
+LINUX USERS: [upcoming...]
 
-4. BUILDING
-Just build the test.cpp source file - it includes all the headers and runs map described in data\cfg\db.cfg with three randomly placed units and another controlled by player. You need to link to libraries SDLmain, SDL, SDL_image and SDL_ttf (and of course you need to have their headers in the include directory of your compiler). Program has to run with several DLLs, which should be no problem if running on Linux but have to be downloaded on Windows, and are:
-  - libfreetype-6.dll
-  - libgcc_s_dw2-1.dll
-  - libpng12-0.dll
-  - libstdc++-6.dll
-  - SDL.dll
-  - SDL_image.dll
-  - SDL_ttf.dll
-  - zlib1.dll
-
-The file imgCFG.cpp contains a small command-line utility to generate a .cfg file from a spritesheet, describing all frames of the sheet in the unnamed script language of above.
-
-The file worldEditor.cpp contains the map editor; I have developed it quickly, so it has a raw command line interface. The prompt accepts following commands:
-  - new <width> <height> <base tile>: creates a new map of size <width> x <height> filled with tile with id <base tile> on layer 0
-  - fill <tile> <layer>: fills map with tile <tile> on layer <layer>
-  - pick <tile> <layer>: picks as brush tile <tile> on layer <layer> (left click: paint, right click: pick terrain, middle click: bucket fill)
-  - deco <deco>: picks as brush decoration <deco> (left click: paint,  right click: erase)
-  - open <map>: opens map with name <map> (opens map only as they were in database when editor started)
-  - save <path>: saves map file in path <path> (relative to executable directory)
-  - id <id>: sets map id
-  - author <author>: sets map author
-  - desc <description>: sets map short description
-Additional features (such as a real UI) might come in future updates, but at the moment I'm focused on the game itself.
-
+NOTE:
 The game has not been tested (yet) on any OS apart from Windows XP (my fault, sorry :)) but as far as I know should be running on Ubuntu, Windows Vista and Seven (hopefully...)
 
 Enjoy!
