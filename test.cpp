@@ -27,6 +27,8 @@ int main(int argc, char* argv[]){
 	
 	campaign current = *get(&campaignDb, "tutorial");
 	current.setup();
+
+	int curFps = 1;
 	
 	while (running){
 		lfb = SDL_GetTicks();
@@ -38,11 +40,18 @@ int main(int argc, char* argv[]){
 		
 		SDL_FillRect(window, &window->clip_rect, 0);
 		current.print(window);
+		
+		SDL_Surface* txt = TTF_RenderText_Solid(globalFont, toString(curFps).c_str(), SDL_Color{255,255,255});
+		SDL_Rect o = {window->w - 30, 5};
+		SDL_BlitSurface(txt, NULL, window, &o);
+		SDL_FreeSurface(txt);
+		
 		SDL_Flip(window);
 		
 		current.nextFrame();
 		current.turnMoves();
-
+		
+		curFps = 1000 / (SDL_GetTicks() - lfb);
 		if (SDL_GetTicks() - lfb < 1000 / fps) SDL_Delay(1000 / fps + lfb - SDL_GetTicks());
 	}
 	

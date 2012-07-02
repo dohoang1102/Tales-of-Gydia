@@ -31,12 +31,16 @@ int DB_VARIABLEWARNING		= getErrorCode();//Non-lethal variable error in database
 
 #define OBJTYPE_DECO		"deco"//Object type deco
 #define OBJTYPE_TERRAIN		"terrain"//Object type terrain
+#define OBJTYPE_EFFECT		"effect"//Object type effect
 #define OBJTYPE_WEAPON		"weapon"//Object type weapon
+#define OBJTYPE_CLOTH		"cloth"//Object type cloth
 #define OBJTYPE_UNIT		"unit"//Object type unit
 #define OBJTYPE_MAP			"map"//Object type map
+#define OBJTYPE_EVENT		"event"//Object type event
 #define OBJTYPE_SEQUENCE	"sequence"//Object type sequence
 #define OBJTYPE_CAMPAIGN	"campaign"//Object type campaign
 
+//Minimap graphics
 #define MINIMAP_RES			4//Minimap resolution (square size)
 #define MINIMAP_USIZE		3//Minimap unit size
 #define MINIMAP_UCOLOR_0	0x0040FFF0//Minimap unit color for side 0
@@ -46,7 +50,12 @@ int DB_VARIABLEWARNING		= getErrorCode();//Non-lethal variable error in database
 
 #define MINIMAP_UCOLOR(SIDE) (SIDE == 0 ? MINIMAP_UCOLOR_0 : (SIDE == 1 ? MINIMAP_UCOLOR_1 : (SIDE == 2 ? MINIMAP_UCOLOR_2 : MINIMAP_UCOLOR_3)))
 
+//Movement settings
 #define MOTIONSTEP			4//Pixels of motion for each frame when units walk
+
+//Event flags
+#define EVENT_NORMAL		0b00000000//Normal event, triggered whenever control script is verified
+#define EVENT_ONCE			0b00000001//Event triggered only the first time control script is verified
 
 //Script results
 #define VOID				-1
@@ -79,6 +88,7 @@ typedef struct {int code; string args;} order;//Order structure
 int tilesSide = 32;//Side of each tile of the map
 
 TTF_Font* globalFont = NULL;//Global font
+TTF_Font* labelsFont = NULL;//Floating labels font
 
 int turn = 0;
 
@@ -287,27 +297,113 @@ class terrain: public content{
 
 list <terrain> terrainDb;//Terrains database
 
+//Effect class
+class effect {
+	public:
+	int hits;//Hits variation
+	int maxHits;//Max hits variation
+	
+	int strength;//Strength bonus
+	int intelligence;//Intelligence bonus
+	int constitution;//Constitution bonus
+	int wisdom;//Wisdom bonus
+	
+	int duration;//Effect duration (0 instant/permanent, else duration in turns)
+	
+	//Constructor
+	effect(){
+		hits = 0;
+		maxHits = 0;
+		duration = 0;
+	}
+	
+	//Function to load from script object
+	void fromScriptObj(object o){
+		if (o.type == OBJTYPE_EFFECT){//If type is matching
+			var* hits = o.getVar("hits");//Hits variable
+			var* maxHits = o.getVar("maxHits");//Max hits variable
+			var* strength = o.getVar("strength");//Strength variable
+			var* intelligence = o.getVar("intelligence");//Intelligence variable
+			var* constitution = o.getVar("constitution");//Constitution variable
+			var* wisdom = o.getVar("wisdom");//Wisdom variable
+			var* duration = o.getVar("duration");//Duration variable
+			
+			//Gets values
+			if (hits) this->hits = hits->intValue();
+			if (maxHits) this->maxHits = maxHits->intValue();
+			if (strength) this->strength = strength->intValue();
+			if (intelligence) this->intelligence = intelligence->intValue();
+			if (constitution) this->constitution = constitution->intValue();
+			if (wisdom) this->wisdom = wisdom->intValue();
+			if (duration) this->duration = duration->intValue();
+		}
+	}
+};
+
+//Cloth class
+class cloth: public content{
+	public:
+	animSet overlay;//Cloth animations
+	int layer;//Cloth layer (highest layer -> printed on top, layer = 0 -> printed below character)
+	
+	effect onEquip;//On-equip effect
+	
+	//Constructor
+	cloth(){
+		layer = 1;
+	}
+	
+	//Printing function
+	void print(SDL_Surface* target, int x, int y){
+		overlay.print(target, x, y);
+	}
+	
+	//Function to load from script object
+	void fromScriptObj(object o){
+		if (o.type == OBJTYPE_CLOTH){//If type is matching
+			content::fromScriptObj(o);//Loads base content data
+			
+			object* overlay = o.getObj("overlay");//Gets overlay object
+			var* layer = o.getVar("layer");//Gets layer variable
+			
+			object* onEquip = o.getObj("onEquip");//On-equip effect
+			
+			if (overlay) this->overlay.fromScriptObj(*overlay);//Loads overlay
+			if (layer) this->layer = layer->intValue();//Gets layer
+			if (onEquip) this->onEquip.fromScriptObj(*onEquip);//Gets on-equip effect
+			
+			this->overlay.setAnim("idle_s");
+		}
+	}
+};
+
+//Function to sort cloths according to layer
+bool sortCloths_compare(cloth* a, cloth* b){
+	if (a->layer < b->layer) return true;
+	return false;
+}
+
+list <cloth> clothDb;//Cloths database
+
 //Weapon class
 class weapon: public content{
 	public:
-	//Stats
-	int damageMin, damageMax;//Minimum and maximum damage (effective damage is a random number between these)
-	bool image;//Flag indicating if image was given
-	
 	//Graphics
 	animSet overlay;//Weapon overlay (shown when striking)
 	string strikeAnim;//Player strike animation
 	int strikeFrame;//Frame of animation when unit strikes
+	bool image;//Flag indicating if image was given
+	
+	//Effects
+	effect onEquip;//On-equip effect
+	effect onTarget;//On-target effect
 	
 	//Constructor
 	weapon(){
 		id = "";
 		author = "";
 		description = "";
-		
-		damageMin = 1;
-		damageMax = 1;
-		
+				
 		strikeAnim = "";
 		strikeFrame = 0;
 		image = false;
@@ -318,24 +414,18 @@ class weapon: public content{
 		if (o.type == OBJTYPE_WEAPON){//If types are matching
 			content::fromScriptObj(o);//Loads base content data
 			
-			var* damageMin = o.getVar("damageMin");//Minimum damage variable
-			var* damageMax = o.getVar("damageMax");//Maximum damage variable
 			object* overlay = o.getObj("overlay");//Weapon overlay object
 			var* strikeAnim = o.getVar("strikeAnim");//Strike animation variable
 			var* strikeFrame = o.getVar("strikeFrame");//Strike frame variable
+			object* onEquip = o.getObj("onEquip");//On equip effect object
+			object* onTarget = o.getObj("onTarget");//On target effct object
 			
-			if (damageMin) this->damageMin = damageMin->intValue();//Gets minimum damage
-			if (damageMax) this->damageMax = damageMax->intValue();//Gets maximum damage
 			if (overlay){ this->overlay.fromScriptObj(*overlay); image = true;}//Loads overlay
 			if (strikeAnim) this->strikeAnim = strikeAnim->value;//Gets strike animation
 			if (strikeFrame) this->strikeFrame = strikeFrame->intValue();//Gets strike frame
+			if (onEquip) this->onEquip.fromScriptObj(*onEquip);//Loads on equip effect
+			if (onTarget) this->onTarget.fromScriptObj(*onTarget);//Loads on target effect
 		}
-	}
-	
-	//Function to get effective damage
-	int damage(){
-		if (damageMin != damageMax) return damageMin + (rand() % (damageMax - damageMin));
-		else return damageMax;
 	}
 	
 	//Function to print weapon
@@ -364,12 +454,24 @@ class unit: public content{
 	string name;//Name of unit
 	int side;//Unit side
 	
-	//Status
-	int hits, maxHits;//Unit hits and max hits
-	int sight;//Unit sight
+	//Stats
+	int baseHits;//Unit's base hits (no effects, no stats applied)
+	int baseMaxHits;//Unit's base max hits (no effects, no stats applied)
+	int baseMana;//Unit's base mana
+	int baseMaxMana;//Unit's base max mana
+	
+	int baseStrength;//Unit's strength
+	int baseIntelligence;//Unit's intelligence
+	int baseConstitution;//Unit's constitution
+	int baseWisdom;//Unit's wisdom
+	
+	int sight;//Unit's sight
+	
+	list<effect> tempEffects;//Temporary effects
 	
 	//Fighting
 	weapon *primary;//Primary melee weapon
+	deque <cloth*> cloths;//Unit cloths
 	
 	//Constructor
 	unit(){
@@ -389,8 +491,14 @@ class unit: public content{
 		name = "";
 		side = 0;
 		
-		hits = 1;
-		maxHits = 1;
+		baseHits = 1;
+		baseMaxHits = 1;
+		baseMana = 1;
+		baseMaxMana = 1;
+		baseStrength = 1;
+		baseIntelligence = 1;
+		baseConstitution = 1;
+		baseWisdom = 1;
 		sight = 5;
 		
 		primary = NULL;
@@ -398,14 +506,21 @@ class unit: public content{
 	
 	//Unit printing function
 	void print(SDL_Surface* target, int x, int y){
+		deque<cloth*>::iterator i;//Iterator
+		for (i = cloths.begin(); i != cloths.end(); i++)//For each cloth
+			if ((*i)->layer == 0) (*i)->print(target, x + dX, y + dY);//Prints cloth if on layer 0
+			else break;//Else exits loop
+		
 		//Prints hitbar
-		if (hits > 0 && maxHits > 0){
-			SDL_Rect hitBar = {x + anims.current()->current()->cShiftX - tilesSide / 2 + dX + 2, y + anims.current()->current()->cShiftY + anims.current()->current()->rect.h / 2 + dY, hits * (tilesSide - 4) / maxHits, 4};
+		if (hits() > 0 && maxHits() > 0){
+			SDL_Rect hitBar = {x + anims.current()->current()->cShiftX - tilesSide / 2 + dX + 2, y + anims.current()->current()->cShiftY + anims.current()->current()->rect.h / 2 + dY, hits() * (tilesSide - 4) / maxHits(), 4};
 			boxColor(target, hitBar.x, hitBar.y, hitBar.x + hitBar.w, hitBar.y + hitBar.h, 0xA000007A);
 		}
 		
 		anims.print(target, x + dX, y + dY);//Prints using animSet printing function (prints current frame of current animation)
 		if (GETACT(action) == ACT_STRIKE && primary && primary->image) primary->overlay.print(target, x + dX, y + dY);//Prints weapon
+	
+		for (;i != cloths.end(); i++) (*i)->print(target, x + dX, y + dY);//Prints remaining cloths
 	}
 	
 	//Function to load from script object
@@ -418,11 +533,11 @@ class unit: public content{
 			var* sight = o.getVar("sight");//Sight variable
 			
 			if (anims) this->anims.fromScriptObj(*anims);//Loads animations
-			if (hits) this->maxHits = hits->intValue();//Gets max hits
+			if (hits) this->baseMaxHits = hits->intValue();//Gets max hits
 			if (sight) this->sight = sight->intValue();//Gets sight
 			
 			this->anims.setAnim("idle_s");//Turns south
-			this->hits = this->maxHits;//Sets hits
+			this->baseHits = this->baseMaxHits;//Sets hits
 		}
 	}
 	
@@ -430,6 +545,7 @@ class unit: public content{
 	void stop(){
 		action = GETACODE(ACT_IDLE, GETDIR(action));//Sets action code
 		anims.setAnim("idle_" + dirToString(GETDIR(action)));//Sets animation
+		setClothsAnim("idle_" + dirToString(GETDIR(action)));//Sets cloths animation
 	}
 	
 	//Walking function
@@ -439,6 +555,7 @@ class unit: public content{
 	void turn(int direction){
 		action = GETACODE(ACT_IDLE, direction);//Sets action code
 		anims.setAnim("idle_" + dirToString(direction));//Sets animation
+		setClothsAnim("idle_" + dirToString(direction));//Sets cloths animation
 	}
 	
 	//Striking function
@@ -446,6 +563,7 @@ class unit: public content{
 		if (primary){//If weapon is valid
 			action = GETACODE(ACT_STRIKE, GETDIR(action));//Sets action code
 			anims.setAnim(primary->strikeAnim + "_" + dirToString(GETDIR(action)));//Sets striking animation
+			setClothsAnim(primary->strikeAnim + "_" + dirToString(GETDIR(action)));//Sets cloth animation
 			
 			if (primary->image){
 				primary->overlay.setAnim("strike_" + dirToString(GETDIR(action)));//Sets weapon animation
@@ -460,6 +578,7 @@ class unit: public content{
 	void kill(){
 		action = ACT_DYING;//Sets action code
 		anims.setAnim("dying");//Sets animation
+		setClothsAnim("dying");//Sets cloths animation
 	}
 	
 	//Function to go to next frame
@@ -479,17 +598,97 @@ class unit: public content{
 	
 	//Function to damage unit
 	void damage(int amount){
-		hits -= amount;
-		if (hits <= 0) kill();
+		baseHits -= amount;
+		if (hits() <= 0) kill();
+	}
+	
+	//Function to heal unit
+	void heal(int amount){
+		baseHits += amount;
+		if (hits() <= 0) kill();
 	}
 	
 	//Function to give primary melee weapon to unit
 	void giveWeapon_primary(string id){
-		primary = get(&weaponDb, id);//Sets weapon
+		weapon *w = new weapon;
+		if(get(&weaponDb, id)) *w = *get(&weaponDb, id);//Sets weapon
+		
+		primary = w;//Sets primary weapon
+	}
+	
+	//Function to give cloth to unit
+	void wear(string id){
+		cloth *c = new cloth;//New cloth
+		if (get(&clothDb, id)) *c = *get(&clothDb, id);//Gets cloth
+		
+		cloths.push_back(c);//Adds cloth
+		cout << name << " now wears " << id << endl;
+	}
+	
+	//Function to set animation for all cloths
+	void setClothsAnim(string id){
+		deque<cloth*>::iterator i;//Iterator
+		for (i = cloths.begin(); i != cloths.end(); i++)//For each cloth
+			(*i)->overlay.setAnim(id);//Sets cloth anim
+	}
+	
+	//Function to move to next frame for all cloths
+	void nextFrameCloths(){
+		deque<cloth*>::iterator i;//Iterator
+		for (i = cloths.begin(); i != cloths.end(); i++)//For each cloth
+			(*i)->overlay.next();//Sets cloth anim
 	}
 	
 	//Function to make AI move (prototype)
 	void AI();
+	
+	//Function to get unit hits applying effects
+	int hits(){
+		return baseHits;//Return plain hits (no permanent-temporary effects can affect hits)
+	}
+	
+	//Functio to get max unit hits applying effects
+	int maxHits(){
+		int result = baseMaxHits;//Base max hits
+		
+		int i;//Counter
+		for (i = 0; i < cloths.size(); i++) result += cloths[i]->onEquip.maxHits;//Adds effect of each cloth
+		
+		return result;//Returns result
+	}
+	
+	//Function to apply an effect to the unit
+	void applyEffect(effect e){
+		if (e.duration == 0){//Instant/permanente effect
+			//Applies effect to stats
+			heal(e.hits);
+			baseMaxHits += e.maxHits;
+			baseStrength += e.strength;
+			baseConstitution += e.constitution;
+			baseIntelligence += e.intelligence;
+			baseWisdom += e.wisdom;
+		}
+		
+		else {//Temporary effect
+			tempEffects.push_back(e);//Adds effect to effects
+		}
+	}
+	
+	//Function to apply temporary effects and remove the finished ones
+	void tempEff(){
+		list<effect>::iterator e;//Iterator
+		
+		for (e = tempEffects.begin(); e != tempEffects.end(); e++){//For each temporary effect
+			if (e->duration == 0) e = tempEffects.erase(e);//Removes effect if finished
+			
+			else {//Else
+				e->duration--;//Reduces duration by 1
+				
+				//Applies time effects (basically hits, mana)
+				heal(e->hits);
+			}
+		}
+	}
 };
 
 //Function determining if an unit comes before another one (lower y or equal y and lower x)
@@ -565,6 +764,7 @@ class controller{
 	bool AI(){
 		if (units.size() == 0) return true;//Returns true if there are no units
 		
+		begin:
 		if (AI_current >= 0 || units[AI_current - 1]->ready() || units[AI_current - 1]->action == ACT_DEAD){//If current unit is the first or the previous is ready or dead
 			if (AI_current == units.size()){//If that was last unit
 				AI_current = 0;//Goes back to first unit
@@ -574,6 +774,8 @@ class controller{
 			else {//Else
 				units[AI_current]->AI();//Execs current unit's AI function
 				AI_current++;//Next unit
+				
+				if (units[AI_current - 1]->ready() || units[AI_current - 1]->action == ACT_DEAD) goto begin;//Restarts from beginning if unit did nothing
 				return false;//Returns false
 			}
 		}
@@ -1093,6 +1295,27 @@ class map: public content{
 		}
 	}
 	
+	//Function to apply effect to unit in given tile
+	void applyEffect(int x, int y, effect e){
+		deque<unit*>::iterator i;//Iterator
+		
+		for(i = units.begin(); i != units.end(); i++){//For each unit
+			if ((*i)->x == x && (*i)->y == y){//If unit is in given position
+				(*i)->applyEffect(e);//Applies effect to unit
+				break;//Exits loop
+			}
+		}
+	}
+	
+	//Function to apply temporary effects to all units
+	void tempEffects(){
+		deque<unit*>::iterator i;//Iterator
+		
+		for (i = units.begin(); i != units.end(); i++){//For each unit
+			(*i)->tempEff();//Applies temp effects to unit
+		}
+	}
+	
 	//Function to fill map with given tile at given layer
 	void fill(string tId, int layer){
 		int x, y;//Tile counters
@@ -1166,12 +1389,42 @@ class script{
 	int exec(campaign* c);
 };
 
+//Event class
+class event {
+	public:
+	script control;//Event control script (must return true to trigger event)
+	script action;//Action script, triggered when control script is verified
+	
+	int flags;//Event flags
+	
+	//Constructor
+	event(){
+		flags = 0b00000000;
+	}
+	
+	//Function to load from script object
+	void fromScriptObj(object o){
+		if (o.type == OBJTYPE_EVENT){//If type is matching
+			var* control = o.getVar("script_control");//Control script variable
+			var* action = o.getVar("script_action");//Action script variable
+			
+			var* triggerOnce = o.getVar("triggerOnce");//Trigger once flag
+			
+			if (control) this->control.fromString(control->value);//Loads control script
+			if (action) this->action.fromString(action->value);//Loads action script
+			
+			if (triggerOnce && triggerOnce->intValue()) flags |= EVENT_ONCE;//Trigger once flag
+		}
+	}
+};
+
 //Sequence class
 class sequence: public content{
 	public:
 	script begin;//Begin script, executed when starting sequence
-	script check;//Check script, executed on each frame to check if sequence has reached its end
 	script end;//End script, executed when finishing sequence
+	
+	list <event> events;//Sequence events
 	
 	//Function to load from script object
 	void fromScriptObj(object o){
@@ -1179,12 +1432,32 @@ class sequence: public content{
 			content::fromScriptObj(o);//Loads base content data
 			
 			var* begin = o.getVar("script_begin");//Begin script variable
-			var* check = o.getVar("script_check");//Check script variable
 			var* end = o.getVar("script_end");//End script variable
 			
 			if (begin) this->begin.fromString(begin->value);//Gets begin script
-			if (check) this->check.fromString(check->value);//Gets check script
 			if (end) this->end.fromString(end->value);//Gets end script
+			
+			deque<object>::iterator i;//Object iterator
+			for (i = o.o.begin(); i != o.o.end(); i++){//For each sub object
+				if (i->type == OBJTYPE_EVENT){//If object is an event
+					event newEv;//New event
+					newEv.fromScriptObj(*i);//Loads event
+					events.push_back(newEv);//Adds event to list
+				}
+			}
+		}
+	}
+	
+	//Function to check all sequence events
+	void checkEvents(campaign* parent){
+		list<event>::iterator i;//Event iterator
+		
+		for (i = events.begin(); i != events.end(); i++){//For each event
+			if (i->control.exec(parent) == TRUE){//If control script is verified
+				i->action.exec(parent);//Triggers action event
+				
+				if (i->flags & EVENT_ONCE) i = events.erase(i);//Erases event if has to be triggered only once
+			}
 		}
 	}
 };
@@ -1250,7 +1523,6 @@ class campaign: public content{
 	
 	//Next frame function
 	void nextFrame(){
-		if (seq[curSequence].check.exec(this) == TRUE) nextSeq();//Runs control script and moves to next sequence if needed
 		if (m) m->nextFrame();//Goes to map next frame if possible
 	}
 	
@@ -1262,7 +1534,8 @@ class campaign: public content{
 			if (!player.ready() && ai.valid()) turn++;//Goes to AI turn if moved
 		}
 		
-		if (turn == 1 && player.ready() && ai.readyOrDead() && ai.AI()) turn = 0;//Goest to player turn if all AI units have been moved
+		if (turn == 1 && player.ready() && ai.readyOrDead() && ai.AI())//When all AI units have been moved
+			endTurn();//Ends turn
 	}
 	
 	//Campaign setup function
@@ -1271,6 +1544,14 @@ class campaign: public content{
 		if (seq.size() > 0) seq.front().begin.exec(this);//Execs first sequence beginning script
 		
 		if (player.units.size() > 0) m->makeSightMask(player.units[0], window->w, window->h);//Makes sight mask
+	}
+	
+	//End turn function
+	void endTurn(){
+		m->tempEffects();//Applies temporary effects
+		seq[curSequence].checkEvents(this);//Checks sequence events
+		
+		turn = 0;//Restarts turn
 	}
 	
 	//Function to get a deque of campaign variables
@@ -1301,6 +1582,8 @@ int script::exec(campaign* c){
 	
 	int i;//Counter
 	int result = VOID;//Script result (false on errors)
+	
+	deque<var> vars = c->getVars();//Generates variables
 		
 	for (i = 0; i < cmds.size(); i++){//For each instruction		
 		deque<string> tokens = tokenize(cmds[i], "\t ");
@@ -1320,6 +1603,11 @@ int script::exec(campaign* c){
 		else if (tokens[0] == "giveWeapon_primary" && tokens.size() >= 3){//Give primary weapon instruction
 			unit* u = c->m->getUnit_name(tokens[1]);//Gets unit
 			if (u) u->giveWeapon_primary(tokens[2]);//Gives weapon to unit
+		}
+		
+		else if (tokens[0] == "wear" && tokens.size() >= 3){//Gives clothing to unit
+			unit* u = c->m->getUnit_name(tokens[1]);//Gets unit
+			if (u) u->wear(tokens[2]);//Gives cloth to unit
 		}
 		
 		else if (tokens[0] == "giveControl" && tokens.size() >= 2){//Give control to player instruction
@@ -1362,7 +1650,7 @@ int script::exec(campaign* c){
 			int j;//Counter
 			for (j = 1; j < tokens.size(); j++) s += tokens[j] + " ";//Adds each token to string
 			
-			string result = expr(s, &ops_bool, &c->getVars());//Calculates expression
+			string result = expr(s, &ops_bool, &vars);//Calculates expression
 			if (!atoi(result.c_str())) i++;//Skips next instruction if statement is false
 		}
 		
@@ -1370,6 +1658,10 @@ int script::exec(campaign* c){
 			if (tokens[1] == "true") return TRUE;
 			else if (tokens[1] == "false") return FALSE;
 			else return VOID;
+		}
+		
+		else if (tokens[0] == "endSequence"){//End sequence instruction
+			c->nextSeq();//Moves to next sequence
 		}
 	}
 	
@@ -1413,11 +1705,13 @@ void unit::walk(int direction){
 
 	action = GETACODE(ACT_WALK, direction);//Sets action codes
 	anims.setAnim("walk_" + dirToString(direction));//Sets walking animation
+	setClothsAnim("walk_" + dirToString(direction));//Sets walking animation for cloths
 }
 
 //Function to go to next frame
 void unit::nextFrame(){
 	anims.next();//Next animation frame
+	nextFrameCloths();//Next cloths frame
 	
 	if (GETACT(action) == ACT_WALK){//If unit is walking
 		//Moves unit
@@ -1475,10 +1769,10 @@ void unit::nextFrame(){
 		
 		if (anims.current()->curFrame == primary->strikeFrame && parent){//At half striking animation
 			switch (GETDIR(action)){//According to direction
-				case NORTH: parent->damage(x, y - 1, primary->damage()); break;
-				case WEST: parent->damage(x - 1, y, primary->damage()); break;
-				case SOUTH: parent->damage(x, y + 1, primary->damage()); break;
-				case EAST: parent->damage(x + 1, y, primary->damage()); break;
+				case NORTH: parent->applyEffect(x, y - 1, primary->onTarget); break;
+				case WEST: parent->applyEffect(x - 1, y, primary->onTarget); break;
+				case SOUTH: parent->applyEffect(x, y + 1, primary->onTarget); break;
+				case EAST: parent->applyEffect(x + 1, y, primary->onTarget); break;
 			}
 		}
 	}
@@ -1560,6 +1854,12 @@ void loadDatabase(object o){
 			weaponDb.push_back(newWeapon);//Adds weapon to database
 		}
 		
+		if (i->type == OBJTYPE_CLOTH){//If object is a cloth
+			cloth newCloth;//New cloth
+			newCloth.fromScriptObj(*i);//Loads cloth
+			clothDb.push_back(newCloth);//Adds cloth to database
+		}
+		
 		if (i->type == OBJTYPE_DECO){//If object is a decoration
 			deco newDeco;//New decoration
 			newDeco.fromScriptObj(*i);//Loads deco
@@ -1572,6 +1872,9 @@ void loadDatabase(object o){
 			campaignDb.push_back(newCampaign);//Adds campaign
 		}
 	}
+	
+	cout << "Loaded successfully!" << endl;
+	cout << terrainDb.size() << " terrains\n" << mapDb.size() << " maps\n" << unitDb.size() << " units\n" << weaponDb.size() << " weapons\n" << clothDb.size() << " cloths\n" << decoDb.size() << " decos\n" << campaignDb.size() << " campaigns\n";
 }
 
 //Initialization function
@@ -1590,6 +1893,7 @@ void game_init(string dbFile, string settingsFile){
 	object settings = s.objGen("settings");//Loads settings
 	
 	if (settings.getVar("font_global")) globalFont = TTF_OpenFont(settings.getVar("font_global")->value.c_str(), 12);//Opens global font
+	if (settings.getVar("font_labels")) labelsFont = TTF_OpenFont(settings.getVar("font_labels")->value.c_str(), 12);//Opens global font
 	
 	//Sets operators
 	op bool_equal ("=", 1, ops_bool_equal);
