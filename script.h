@@ -104,6 +104,11 @@ class var{
 	int intValue(){
 		return atoi(value.c_str());
 	}
+	
+	//Function to return value as double
+	double doubleValue(){
+		return atof(value.c_str());
+	}
 };
 
 //Object class

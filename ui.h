@@ -32,7 +32,7 @@ SDL_Surface* window = NULL;//Surface for the current window
 #define MOVEEV(NAME) 			void (*NAME)(control*, moveEvent)//Control move event function macro
 #define TYPEEV(NAME)			void (*NAME)(textBox*, typeEvent)//Text box text type event function macro
 
-#define RENDERTEXT				TTF_RenderText_Solid//Text rendering function
+#define RENDERTEXT				TTF_RenderText_Blended//Text rendering function
 
 #define CONTROL					0//Control base type
 #define PANEL					1//Control type panel
@@ -40,6 +40,7 @@ SDL_Surface* window = NULL;//Surface for the current window
 #define IMGBOX					3//Control type image box
 #define TEXTBOX					4//Control type text box
 #define IMAGEBOX				5//Control type image box
+#define FILLBAR					6//Control type fillbar
 
 class control;//Control class prototype
 class panel;//Panel class prototype
@@ -549,12 +550,12 @@ class textBox: public control{
 		printMethod = &print_default;
 	}
 	
-	//Function to add a handler for motion events
+	//Function to add a handler for typing events
 	void addHandler_type(TYPEEV(handler)){
 		if (handler) typeEvents.push_back(handler);
 	}
 	
-	//Function to remove a handler from motion events
+	//Function to remove a handler from typing events
 	void removeHandler_type(TYPEEV(handler)){
 		list <TYPEEV()> :: iterator i;//Iterator
 		
@@ -596,6 +597,43 @@ class textBox: public control{
 	//Function to get fore color in SDL_Color format
 	SDL_Color getForeColor(){
 		return SDL_Color {(foreColor & 0xFF0000) >> 16, (foreColor & 0x00FF00) >> 8, foreColor & 0x0000FF};//Returns result
+	}
+};
+
+//Fillbar class
+class fillbar: public control{
+	public:
+	int fill, fillMax;//Current fill and maximum fill
+	Uint32 fillColor;//Fill color
+	
+	//Constructor
+	fillbar(){
+		type = FILLBAR;
+		fill = 1;
+		fillMax = 1;
+		fillColor = 0xFFFFFFFF;
+		
+		lockPosition = true;
+		
+		id = "";
+				
+		x = 0;
+		y = 0;
+		w = 0;
+		h = 0;
+		clickX = 0;
+		clickY = 0;
+		clickW = 0;
+		clickH = 0;
+		dragX = 0;
+		dragY = 0;
+		dragW = 0;
+		dragH = 0;
+		
+		status = VISIBLE;
+		
+		backColor = 0x7F7F7FFF;
+		printMethod = &print_default;
 	}
 };
 
@@ -806,6 +844,12 @@ void textBox_print_default(SDL_Surface* target, textBox* e){
 		SDL_BlitSurface(text, NULL, target, &offset);//Prints text
 		SDL_FreeSurface(text);//Frees text
 	}
+}
+
+//Default fillbar printing function
+void fillBar_print_default(SDL_Surface* target, fillbar* e){
+	boxColor(target, e->x, e->y, e->x + e->w, e->y + e->h, e->getBackColor());//Prints filled rectangle
+	boxColor(target, e->x, e->y, e->x + (e->w * e->fill / e->fillMax), e->y + e->h, e->fillColor);//Prints fill
 }
 
 //Default control printing function

@@ -23,7 +23,7 @@ int main(int argc, char* argv[]){
 	bool running = true;
 	SDL_Event e;
 	
-	game_init("data\\cfg\\db.cfg", "data\\cfg\\settings.cfg");
+	game_init("data\\cfg\\db.cfg", "data\\cfg\\settings.cfg", "data\\cfg\\theme.cfg");
 	
 	campaign current = *get(&campaignDb, "tutorial");
 	current.setup();
@@ -39,10 +39,10 @@ int main(int argc, char* argv[]){
 		}
 		
 		SDL_FillRect(window, &window->clip_rect, 0);
-		current.print(window);
+		current.print(window, window->w / 2, window->h / 2);
 		
-		SDL_Surface* txt = TTF_RenderText_Solid(globalFont, toString(curFps).c_str(), SDL_Color{255,255,255});
-		SDL_Rect o = {window->w - 30, 5};
+		SDL_Surface* txt = TTF_RenderText_Solid(globalFont, ("fps: " + toString(curFps)).c_str(), SDL_Color{255,255,255});
+		SDL_Rect o = {window->w - 80, 5};
 		SDL_BlitSurface(txt, NULL, window, &o);
 		SDL_FreeSurface(txt);
 		

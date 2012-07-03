@@ -31,6 +31,7 @@ int DB_VARIABLEWARNING		= getErrorCode();//Non-lethal variable error in database
 
 #define OBJTYPE_DECO		"deco"//Object type deco
 #define OBJTYPE_TERRAIN		"terrain"//Object type terrain
+#define OBJTYPE_DAMTYPE		"damageType"//Object type damage type
 #define OBJTYPE_EFFECT		"effect"//Object type effect
 #define OBJTYPE_WEAPON		"weapon"//Object type weapon
 #define OBJTYPE_CLOTH		"cloth"//Object type cloth
@@ -75,24 +76,59 @@ int DB_VARIABLEWARNING		= getErrorCode();//Non-lethal variable error in database
 #define ACT_STRIKE			0x20//Striking
 #define ACT_DYING			0x30//Dying
 #define ACT_DEAD			0x40//Dead
+#define ACT_REST			0x50//Resting
 
 #define GETACODE(ACT,DIR)	((ACT) | (DIR))//Macro to get action and direction code out of separate action and direction
 #define GETACT(CODE) 		((CODE) & 0xF0)//Macro to get action code out of code with action and direction
 #define GETDIR(CODE)		((CODE) % 0x10)//Macro to get direction code out of code with action and direction
 
+//Damage super types
+#define DAM_PHYSICAL		0//Phisical damage
+#define DAM_MAGICAL			1//Magical damage
+
+//Game calculations: damage, mana costs, ...
+#define MINDAMAGE							-1//Minimum damage that can be taken (if calculates lower damage, replaced with this value)
+#define CALC_DAMAGEDEALT(BASE, STAT)		((BASE) * (1 + STAT / 100))//Dealt damage calculation: [base weapon damage] * [strength/intelligence] / 10 - this means: strength = 1 => 10% damage bonus on weapons
+#define CALC_DAMAGETAKEN(BASE, STAT, MULT)	((BASE) * ((MULT) - (STAT) / 100) >= MINDAMAGE ? MINDAMAGE : ceil((BASE) * ((MULT) - (STAT) / 100)))//Damage taken calculation: [base damage] * [resistance multiplier reduced of stat/100]
+#define CALC_RECOVERY(STAT1, STAT2)			((STAT1) * (STAT2) > 100 ? (STAT1) * (STAT2) / 100 : 1)//Recovery calculation
+
+class unit;//Unit class prototype
 class map;//Map class prototype
 class campaign;//Campaign class prototype
 
 typedef struct {int code; string args;} order;//Order structure
 
 int tilesSide = 32;//Side of each tile of the map
-
-TTF_Font* globalFont = NULL;//Global font
-TTF_Font* labelsFont = NULL;//Floating labels font
-
-int turn = 0;
-
 deque<op> ops_bool;//Boolean script operators
+
+//Settings
+//Fonts
+TTF_Font* globalFont = NULL;//Global generic font
+TTF_Font* panelFont_major = NULL;//Panel major font
+TTF_Font* panelFont_minor = NULL;//Panel minor font
+
+//User interface
+//User interface data - game HUD
+SDL_Surface* bar_frame = NULL;//Frame for hit and mana bars
+SDL_Rect bar_frame_offset = {0, 0};//Frame offset
+
+SDL_Surface* bar_hits = NULL;//Hitbar fill
+SDL_Rect bar_hits_offset = {0, 0};//Hitbar offset
+
+SDL_Surface* bar_mana = NULL;//Manabar fill
+SDL_Rect bar_mana_offset = {0, 0};//Manabar offset
+
+SDL_Surface* infoPanel_pict = NULL;//Info panel picture
+panel infoPanel;//Player info panel
+textBox nameBox;//Player name box
+textBox hpBox, mpBox;//Player hp and mp box
+textBox strBox, intBox, conBox, wisBox;//Statistics boxes
+textBox effBox;//Effects box
+
+Uint32 infoPanel_col1 = 0x000000;//Color for main stuff in info panel
+Uint32 infoPanel_col2 = 0x000000;//Secondary color in info panel
+Uint32 infoPanel_col3 = 0x000000;//Color for bonuses in info panel
+Uint32 infoPanel_col4 = 0x000000;//Color for maluses in info panel
 
 //Boolean operators functions
 string ops_bool_equal(string a, string b){ return toString(a == b); }
@@ -100,6 +136,26 @@ string ops_bool_greater(string a, string b){ return toString(atoi(a.c_str()) > a
 string ops_bool_less(string a, string b){ return toString(atoi(a.c_str()) < atoi(b.c_str())); }
 string ops_bool_and(string a, string b){ return toString(atoi(a.c_str()) && atoi(b.c_str())); }
 string ops_bool_or(string a, string b){ return toString(atoi(a.c_str()) || atoi(b.c_str())); }
+
+//Panel printing function
+void panelPrint(SDL_Surface* target, control* p){
+	SDL_Rect offset = {p->x, p->y};//Offset rectangle
+	SDL_BlitSurface(infoPanel_pict, NULL, target, &offset);//Prints panel picture
+	
+	panel* e = (panel*) p;//Converts to panel
+	list<control*>::iterator i;//Iterator for controls
+	for (i = e->controls.begin(); i != e->controls.end(); i++){//For each control
+		//Applies offset
+		(*i)->x += e->x;
+		(*i)->y += e->y;
+		
+		(*i)->print(target);//Prints the control
+		
+		//Removes offset
+		(*i)->x -= e->x;
+		(*i)->y -= e->y;
+	}
+}
 
 //Function to convert direction in string
 string dirToString (int dir){
@@ -297,11 +353,49 @@ class terrain: public content{
 
 list <terrain> terrainDb;//Terrains database
 
+//Damage type class
+class damType: public content {
+	public:
+	int superType;//Damage super-type (physical/magic)
+	
+	double mult;//Damage multiplier (used in resistances)
+	
+	//Constructor
+	damType(){
+		id = "";
+		superType = DAM_PHYSICAL;
+		
+		mult = 1;
+	}
+	
+	//Function to load from script object
+	void fromScriptObj(object o){
+		if (o.type == OBJTYPE_DAMTYPE){//If type is matching
+			content::fromScriptObj(o);//Loads base content data (only id and description are used)
+			
+			var* superType = o.getVar("type");//Super type variable
+			var* mult = o.getVar("multiplier");//Multiplier variable
+			
+			//Sets super-type
+			if (superType){
+				if (superType->value == "physical") this->superType = DAM_PHYSICAL;
+				else if (superType->value == "magical") this->superType = DAM_MAGICAL;
+			}
+			
+			if (mult) this->mult = mult->doubleValue();//Gets multiplier
+		}
+	}
+};
+
+list <damType> damTypeDb;//Types database
+
 //Effect class
-class effect {
+class effect: public content {
 	public:
 	int hits;//Hits variation
 	int maxHits;//Max hits variation
+	int mana;//Mana variation
+	int maxMana;//Max mana variation
 	
 	int strength;//Strength bonus
 	int intelligence;//Intelligence bonus
@@ -310,32 +404,54 @@ class effect {
 	
 	int duration;//Effect duration (0 instant/permanent, else duration in turns)
 	
+	damType type;//Effect damage type (needed only if effect damages someone)
+	
+	bool img;//Flag indicating if image was given
+	image icon;//Icon shown when effect is active
+	
 	//Constructor
 	effect(){
 		hits = 0;
 		maxHits = 0;
+		mana = 0;
+		maxMana = 0;
+		strength = 0;
+		intelligence = 0;
+		constitution = 0;
+		wisdom = 0;
 		duration = 0;
+		img = false;
 	}
 	
 	//Function to load from script object
 	void fromScriptObj(object o){
 		if (o.type == OBJTYPE_EFFECT){//If type is matching
+			content::fromScriptObj(o);//Loads base content data (only description used)
+			
 			var* hits = o.getVar("hits");//Hits variable
 			var* maxHits = o.getVar("maxHits");//Max hits variable
+			var* mana = o.getVar("mana");//Mana variable
+			var* maxMana = o.getVar("maxMana");//Max mana variable
 			var* strength = o.getVar("strength");//Strength variable
 			var* intelligence = o.getVar("intelligence");//Intelligence variable
 			var* constitution = o.getVar("constitution");//Constitution variable
 			var* wisdom = o.getVar("wisdom");//Wisdom variable
 			var* duration = o.getVar("duration");//Duration variable
-			
+			var* type = o.getVar("type");//Type variable
+			object* icon = o.getObj("icon");//Icon variable
+				
 			//Gets values
 			if (hits) this->hits = hits->intValue();
 			if (maxHits) this->maxHits = maxHits->intValue();
+			if (mana) this->mana = mana->intValue();
+			if (maxMana) this->maxMana = maxMana->intValue();
 			if (strength) this->strength = strength->intValue();
 			if (intelligence) this->intelligence = intelligence->intValue();
 			if (constitution) this->constitution = constitution->intValue();
 			if (wisdom) this->wisdom = wisdom->intValue();
 			if (duration) this->duration = duration->intValue();
+			if (type && get(&damTypeDb, type->value)) this->type = *get(&damTypeDb, type->value);
+			if (icon) {this->icon.fromScriptObj(*icon); img = true;}
 		}
 	}
 };
@@ -394,7 +510,7 @@ class weapon: public content{
 	int strikeFrame;//Frame of animation when unit strikes
 	bool image;//Flag indicating if image was given
 	
-	//Effects
+	//Effects and stats
 	effect onEquip;//On-equip effect
 	effect onTarget;//On-target effect
 	
@@ -432,6 +548,9 @@ class weapon: public content{
 	void print(SDL_Surface* target, int x, int y){
 		if (image) overlay.print(target,x,y);//Prints image if given
 	}
+	
+	//Function to get weapon effect on target with bonuses related to owner stats (mainly damage bonuses)
+	effect getEff(unit* u);
 };
 
 list <weapon> weaponDb;//Weapons database
@@ -468,10 +587,14 @@ class unit: public content{
 	int sight;//Unit's sight
 	
 	list<effect> tempEffects;//Temporary effects
+	list<damType> resistances;//Per-type resistances
 	
 	//Fighting
 	weapon *primary;//Primary melee weapon
 	deque <cloth*> cloths;//Unit cloths
+	
+	//Various
+	bool moved;//Flag indicating if unit has moved
 	
 	//Constructor
 	unit(){
@@ -502,6 +625,8 @@ class unit: public content{
 		sight = 5;
 		
 		primary = NULL;
+		
+		moved = false;
 	}
 	
 	//Unit printing function
@@ -521,6 +646,16 @@ class unit: public content{
 		if (GETACT(action) == ACT_STRIKE && primary && primary->image) primary->overlay.print(target, x + dX, y + dY);//Prints weapon
 	
 		for (;i != cloths.end(); i++) (*i)->print(target, x + dX, y + dY);//Prints remaining cloths
+		
+		//Prints effect icons
+		list<effect>::iterator e;//Effect iterator
+		int eX = x - tilesSide / 2 + dX + 4;
+		for (e = tempEffects.begin(); e != tempEffects.end(); e++){//For each effect
+			if (e->img){//If effect icon is available
+				e->icon.print(target, eX, y + anims.current()->current()->cShiftY + anims.current()->current()->rect.h / 2 + dY - e->icon.rect.h / 2 - 1);
+				eX += e->icon.rect.w + 1;
+			}
+		}
 	}
 	
 	//Function to load from script object
@@ -530,6 +665,11 @@ class unit: public content{
 			
 			object* anims = o.getObj("anims");//AnimSet object
 			var* hits = o.getVar("hits");//Hits variable
+			var* mana = o.getVar("mana");//Mana variable
+			var* strength = o.getVar("strength");//Strength variable
+			var* intelligence = o.getVar("intelligence");//Intelligence variable
+			var* constitution = o.getVar("constitution");//Constitution variable
+			var* wisdom = o.getVar("wisdom");//Wisdom variable
 			var* sight = o.getVar("sight");//Sight variable
 			
 			if (anims) this->anims.fromScriptObj(*anims);//Loads animations
@@ -538,6 +678,15 @@ class unit: public content{
 			
 			this->anims.setAnim("idle_s");//Turns south
 			this->baseHits = this->baseMaxHits;//Sets hits
+			
+			deque<object>::iterator i;//Sub object iterator
+			for (i = o.o.begin(); i != o.o.end(); i++){//For each sub-object
+				if (i->type == OBJTYPE_DAMTYPE){//If object is a damage type
+					damType newDT;//New damage type - resistance
+					newDT.fromScriptObj(*i);//Loads resistance
+					resistances.push_back(newDT);//Adds to resistances
+				}
+			}
 		}
 	}
 	
@@ -569,9 +718,18 @@ class unit: public content{
 				primary->overlay.setAnim("strike_" + dirToString(GETDIR(action)));//Sets weapon animation
 				primary->overlay.current()->curFrame = 0;//Restarts animation
 			}
+			
+			moved = true;
 		}
 		
 		else stop();
+	}
+	
+	//Unit rests - skips turn, recovers HP - MP
+	void rest(){
+		varyHits (CALC_RECOVERY(strength(), constitution()));//Recovers health
+		varyMana (CALC_RECOVERY(intelligence(), wisdom()));//Recovers mana
+		moved = true;
 	}
 	
 	//Function to kill unit
@@ -593,19 +751,28 @@ class unit: public content{
 	void execOrder(order o){
 		if (GETACT(o.code) == ACT_WALK) walk(GETDIR(o.code));//Checks for walking orders
 		else if (GETACT(o.code) == ACT_STRIKE) strike();//Checks for striking orders
+		else if (GETACT(o.code) == ACT_REST) rest();//Checks for resting orders
 		else stop();//Stops on any other code
 	}
 	
-	//Function to damage unit
-	void damage(int amount){
-		baseHits -= amount;
-		if (hits() <= 0) kill();
+	//Function to vary hits
+	void varyHits(int amount, damType *type = NULL){
+		if (type && amount < 0){//If damage type was given and unit was damaged (amount < 0)
+			damType* res = get(&resistances, type->id);//Gets resistance
+			baseHits += CALC_DAMAGETAKEN(amount, (type->superType == DAM_PHYSICAL ? constitution() : wisdom()), (res ? res->mult : 1));//Damages unit calculating damage
+		}
+		
+		else baseHits += amount;//Else just varies base hits
+		
+		if (hits() > maxHits()) baseHits -= hits() - maxHits();//Adjust to stay below maxHits
+		if (hits() <= 0) kill();//Kills unit if no hits left
 	}
 	
-	//Function to heal unit
-	void heal(int amount){
-		baseHits += amount;
-		if (hits() <= 0) kill();
+	//Function to vary mana amount
+	void varyMana(int amount){
+		baseMana += amount;//Varies mana
+		
+		if (mana() > maxMana()) baseMana -= mana() - maxMana();//Adjust to stay below maxHits
 	}
 	
 	//Function to give primary melee weapon to unit
@@ -622,7 +789,6 @@ class unit: public content{
 		if (get(&clothDb, id)) *c = *get(&clothDb, id);//Gets cloth
 		
 		cloths.push_back(c);//Adds cloth
-		cout << name << " now wears " << id << endl;
 	}
 	
 	//Function to set animation for all cloths
@@ -649,20 +815,95 @@ class unit: public content{
 	
 	//Functio to get max unit hits applying effects
 	int maxHits(){
-		int result = baseMaxHits;//Base max hits
+		int result = baseMaxHits + (primary ? primary->onEquip.maxHits : 0);//Base max hits + primary weapon bonus
 		
 		int i;//Counter
 		for (i = 0; i < cloths.size(); i++) result += cloths[i]->onEquip.maxHits;//Adds effect of each cloth
 		
-		return result;//Returns result
+		list <effect>::iterator e;//Effect iterator
+		for (e = tempEffects.begin(); e != tempEffects.end(); e++) result += e->maxHits;//Adds each temporary effect
+		
+		return (result > 1 ? result : 1);//Returns result
+	}
+	
+	//Function to get unit mana applying effects
+	int mana(){
+		return baseMana;
+	}
+	
+	//Function to get unit max mana applying effects
+	int maxMana(){
+		int result = baseMaxMana + (primary ? primary->onEquip.maxHits : 0);//Base max mana + primary weapon bonus
+		
+		int i;//Counter
+		for (i = 0; i < cloths.size(); i++) result += cloths[i]->onEquip.maxMana;//Adds effect of each cloth
+		
+		list <effect>::iterator e;//Effect iterator
+		for (e = tempEffects.begin(); e != tempEffects.end(); e++) result += e->maxMana;//Adds each temporary effect
+		
+		return (result > 1 ? result : 1);//Returns result
+	}
+	
+	//Function to get unit strength applying effects
+	int strength(){
+		int result = baseStrength + (primary ? primary->onEquip.strength : 0);//Base strength + primary weapon bonus
+		
+		int i;//Counter
+		for (i = 0; i < cloths.size(); i++) result += cloths[i]->onEquip.strength;//Adds effect of each cloth
+		
+		list <effect>::iterator e;//Effect iterator
+		for (e = tempEffects.begin(); e != tempEffects.end(); e++) result += e->strength;//Adds each temporary effect
+		
+		return (result > 0 ? result : 0);//Returns result
+	}
+	
+	//Function to get unit intelligence applying effects
+	int intelligence(){
+		int result = baseIntelligence + (primary ? primary->onEquip.intelligence : 0);//Base intelligence + primary weapon bonus
+		
+		int i;//Counter
+		for (i = 0; i < cloths.size(); i++) result += cloths[i]->onEquip.intelligence;//Adds effect of each cloth
+		
+		list <effect>::iterator e;//Effect iterator
+		for (e = tempEffects.begin(); e != tempEffects.end(); e++) result += e->intelligence;//Adds each temporary effect
+		
+		return (result > 0 ? result : 0);//Returns result
+	}
+	
+	//Function to get unit constitution applying effects
+	int constitution(){
+		int result = baseConstitution + (primary ? primary->onEquip.constitution : 0);//Base constitution + primary weapon bonus
+		
+		int i;//Counter
+		for (i = 0; i < cloths.size(); i++) result += cloths[i]->onEquip.constitution;//Adds effect of each cloth
+		
+		list <effect>::iterator e;//Effect iterator
+		for (e = tempEffects.begin(); e != tempEffects.end(); e++) result += e->constitution;//Adds each temporary effect
+		
+		return (result > 0 ? result : 0);//Returns result
+	}
+	
+	//Function to get unit wisdom applying effects
+	int wisdom(){
+		int result = baseWisdom + (primary ? primary->onEquip.wisdom : 0);//Base wisdom + primary weapon bonus
+		
+		int i;//Counter
+		for (i = 0; i < cloths.size(); i++) result += cloths[i]->onEquip.wisdom;//Adds effect of each cloth
+		
+		list <effect>::iterator e;//Effect iterator
+		for (e = tempEffects.begin(); e != tempEffects.end(); e++) result += e->wisdom;//Adds each temporary effect
+		
+		return (result > 0 ? result : 0);//Returns result
 	}
 	
 	//Function to apply an effect to the unit
 	void applyEffect(effect e){
 		if (e.duration == 0){//Instant/permanente effect
 			//Applies effect to stats
-			heal(e.hits);
+			varyHits(e.hits, &e.type);
+			varyMana(e.mana);
 			baseMaxHits += e.maxHits;
+			baseMaxMana += e.maxMana;
 			baseStrength += e.strength;
 			baseConstitution += e.constitution;
 			baseIntelligence += e.intelligence;
@@ -679,13 +920,14 @@ class unit: public content{
 		list<effect>::iterator e;//Iterator
 		
 		for (e = tempEffects.begin(); e != tempEffects.end(); e++){//For each temporary effect
-			if (e->duration == 0) e = tempEffects.erase(e);//Removes effect if finished
+			if (e->duration <= 0){ e = tempEffects.erase(e); e--;}//Removes effect if finished
 			
-			else {//Else
+			else if (e->duration >= 0) {//Else
 				e->duration--;//Reduces duration by 1
 				
 				//Applies time effects (basically hits, mana)
-				heal(e->hits);
+				varyHits(e->hits, &e->type);
+				varyMana(e->mana);
 			}
 		}
 	}
@@ -697,6 +939,13 @@ bool sortUnits_compare(unit* a, unit* b){
 }
 
 list<unit> unitDb;//Units database
+
+//Function to get weapon effect on target with bonuses related to owner stats (mainly damage bonuses)
+effect weapon::getEff(unit* u){
+	effect e = onTarget;//Base effect
+	e.hits = CALC_DAMAGEDEALT(e.hits, (e.type.superType == DAM_PHYSICAL ? u->strength() : u->intelligence()));//Calculates damage
+	return e;//Returns effect
+}
 
 //Function calculating distance between units
 double uDist(unit* a, unit* b){
@@ -734,6 +983,9 @@ class controller{
 		//Striking orders
 		else if (keys[SDLK_SPACE]){ giveOrder({ACT_STRIKE, ""}); return true;}
 		
+		//Resting orders
+		else if (keys[SDLK_RETURN]){ giveOrder({ACT_REST, ""}); return true;}
+		
 		return false;
 	}
 	
@@ -742,6 +994,15 @@ class controller{
 		deque<unit*>::iterator u;//Unit iterator
 		for (u = units.begin(); u != units.end(); u++)//For each unit
 			if (!(*u)->ready()) return false;//Returns false if unit is not ready
+		
+		return true;//Returns true if units were all ready
+	}
+	
+	//Function to get if all units have been moved
+	bool moved(){
+		deque<unit*>::iterator u;//Unit iterator
+		for (u = units.begin(); u != units.end(); u++)//For each unit
+			if (!(*u)->moved) return false;//Returns false if unit hasn't been moved
 		
 		return true;//Returns true if units were all ready
 	}
@@ -779,6 +1040,13 @@ class controller{
 				return false;//Returns false
 			}
 		}
+	}
+	
+	//Function to reset moved flag for all units
+	void resetMoved(){
+		deque<unit*>::iterator u;//Unit iterator
+		for (u = units.begin(); u != units.end(); u++)//For each unit
+			(*u)->moved = false;
 	}
 	
 	//Function returning if there are units to be controlled
@@ -1283,18 +1551,6 @@ class map: public content{
 		}
 	}
 	
-	//Function to damage unit in given tile
-	void damage(int x, int y, int amount){
-		deque<unit*>::iterator i;//Iterator
-		
-		for(i = units.begin(); i != units.end(); i++){//For each unit
-			if ((*i)->x == x && (*i)->y == y){//If unit is in given position
-				(*i)->damage(amount);//Damages unit for given amount
-				break;//Exits loop
-			}
-		}
-	}
-	
 	//Function to apply effect to unit in given tile
 	void applyEffect(int x, int y, effect e){
 		deque<unit*>::iterator i;//Iterator
@@ -1370,7 +1626,7 @@ class map: public content{
 list <map> mapDb;//Maps database
 
 //Script class
-class script{
+class script {
 	public:
 	deque<string> cmds;//Script instructions in order of execution
 	
@@ -1474,11 +1730,14 @@ class campaign: public content{
 	deque<sequence> seq;//Sequences of campaign, in order of execution
 	int curSequence;//Current sequence index
 	
+	int turnCount;//Turn count
+		
 	//Constructor
 	campaign(){
 		m = NULL;
 		curSequence = 0;
 		turn = 0;
+		turnCount = 1;
 	}
 	
 	//Function to load from script object
@@ -1502,13 +1761,51 @@ class campaign: public content{
 	}
 	
 	//Printing function
-	void print(SDL_Surface* target){
+	void print(SDL_Surface* target, int x, int y){
+		updateInfoPanel();//Updates info panel
+		
 		if (m){//If map is valid
 			if (player.units.size() > 0)//If there's at least one controlled unit
-				m->print(target, target->w / 2, target->h / 2, player.units[0]);//Prints map centered on first controlled unit
+				m->print(target, x, y, player.units[0]);//Prints map centered on first controlled unit
 			
-			else m->print (target, target->w / 2, target->h / 2);//Else prints map normally
+			else m->print (target, x, y);//Else prints map normally
 		}
+				
+		//Prints hud
+		if (player.units.size() > 0){//If there's a valid unit
+			unit* hero = player.units[0];//Gets hero
+			
+			if (bar_hits){//If there's a valid hitbar
+				SDL_Rect o = bar_hits_offset;//Copies offset
+				
+				SDL_Rect clip;//Clip rectangle
+				clip.x = 0;
+				clip.y = 0;
+				clip.h = bar_hits->h;//Sets clip height
+				clip.w = bar_hits->w * hero->hits() / hero->maxHits();//Sets clip width
+				
+				SDL_BlitSurface(bar_hits, &clip, target, &o);//Prints hitbar
+			}
+			
+			if (bar_mana){//If there's a valid manabar
+				SDL_Rect o = bar_mana_offset;//Copies offset
+				
+				SDL_Rect clip;//Clip rectangle
+				clip.x = 0;
+				clip.y = 0;
+				clip.h = bar_mana->h;//Sets clip height
+				clip.w = bar_mana->w * hero->mana() / hero->maxMana();//Sets clip width
+				
+				SDL_BlitSurface(bar_mana, &clip, target, &o);//Prints manabar
+			}
+		}
+		
+		if (bar_frame){//If there's a valid bar frame
+			SDL_Rect o = bar_frame_offset;//Copies offset
+			SDL_BlitSurface(bar_frame, NULL, target, &o);//Blits frame
+		}
+		
+		infoPanel.print(target);
 	}
 	
 	//Next sequence function
@@ -1531,11 +1828,11 @@ class campaign: public content{
 		if (turn == 0 && player.ready()){//If player turn
 			player.getInput();//Gets player input
 			
-			if (!player.ready() && ai.valid()) turn++;//Goes to AI turn if moved
+			if (player.moved() && player.ready()) nextTurn();//Goes to AI turn if moved
 		}
 		
 		if (turn == 1 && player.ready() && ai.readyOrDead() && ai.AI())//When all AI units have been moved
-			endTurn();//Ends turn
+			nextTurn();//Next turn
 	}
 	
 	//Campaign setup function
@@ -1547,11 +1844,61 @@ class campaign: public content{
 	}
 	
 	//End turn function
-	void endTurn(){
-		m->tempEffects();//Applies temporary effects
-		seq[curSequence].checkEvents(this);//Checks sequence events
+	void nextTurn(){
+		if (turn == 0) turn++;
 		
-		turn = 0;//Restarts turn
+		else if (turn == 1){
+			m->tempEffects();//Applies temporary effects
+			seq[curSequence].checkEvents(this);//Checks sequence events
+			
+			turn = 0;//Restarts turn
+			turnCount++;//Increases turn count
+			
+			player.resetMoved();
+			ai.resetMoved();
+		}
+	}
+	
+	//Function to update info panel content
+	void updateInfoPanel(){
+		if (player.units.size() > 0){//If there's a valid unit
+			//Gets stats
+			int str = player.units[0]->strength();
+			int con = player.units[0]->constitution();
+			int intel = player.units[0]->intelligence();
+			int wis = player.units[0]->wisdom();
+			
+			//Sets colors
+			if (str > player.units[0]->baseStrength) strBox.foreColor = infoPanel_col3;
+			else if (str < player.units[0]->baseStrength) strBox.foreColor = infoPanel_col4;
+			else strBox.foreColor = infoPanel_col2;
+			
+			if (con > player.units[0]->baseConstitution) conBox.foreColor = infoPanel_col3;
+			else if (con < player.units[0]->baseConstitution) conBox.foreColor = infoPanel_col4;
+			else conBox.foreColor = infoPanel_col2;
+			
+			if (intel > player.units[0]->baseIntelligence) intBox.foreColor = infoPanel_col3;
+			else if (intel < player.units[0]->baseIntelligence) intBox.foreColor = infoPanel_col4;
+			else intBox.foreColor = infoPanel_col2;
+			
+			if (wis > player.units[0]->baseWisdom) wisBox.foreColor = infoPanel_col3;
+			else if (wis < player.units[0]->baseWisdom) wisBox.foreColor = infoPanel_col4;
+			else wisBox.foreColor = infoPanel_col2;
+			
+			nameBox.text = player.units[0]->name;//Sets name box
+			hpBox.text = "HP: " + toString(player.units[0]->hits()) + "/" + toString(player.units[0]->maxHits());//HP box
+			mpBox.text = "MP: " + toString(player.units[0]->mana()) + "/" + toString(player.units[0]->maxMana());//MP box
+			strBox.text = "str: " + toString(player.units[0]->strength());//Sets strength box
+			conBox.text = "con: " + toString(player.units[0]->constitution());//Sets constitution box
+			intBox.text = "int: " + toString(player.units[0]->intelligence());//Sets intelligence box
+			wisBox.text = "wis: " + toString(player.units[0]->wisdom());//Sets wisdom box
+			
+			//Sets effect box
+			effBox.text = "";
+			list<effect>::iterator i;//Effect iterator
+			for (i = player.units[0]->tempEffects.begin(); i != player.units[0]->tempEffects.end(); i++)//For each temporary effect on unit
+				effBox.text += i->description + " (" + toString(i->duration + 1) + ") ";//Adds effect info to box
+		}
 	}
 	
 	//Function to get a deque of campaign variables
@@ -1703,6 +2050,7 @@ void unit::walk(int direction){
 		}
 	}
 
+	moved = true;
 	action = GETACODE(ACT_WALK, direction);//Sets action codes
 	anims.setAnim("walk_" + dirToString(direction));//Sets walking animation
 	setClothsAnim("walk_" + dirToString(direction));//Sets walking animation for cloths
@@ -1769,10 +2117,10 @@ void unit::nextFrame(){
 		
 		if (anims.current()->curFrame == primary->strikeFrame && parent){//At half striking animation
 			switch (GETDIR(action)){//According to direction
-				case NORTH: parent->applyEffect(x, y - 1, primary->onTarget); break;
-				case WEST: parent->applyEffect(x - 1, y, primary->onTarget); break;
-				case SOUTH: parent->applyEffect(x, y + 1, primary->onTarget); break;
-				case EAST: parent->applyEffect(x + 1, y, primary->onTarget); break;
+				case NORTH: parent->applyEffect(x, y - 1, primary->getEff(this)); break;
+				case WEST: parent->applyEffect(x - 1, y, primary->getEff(this)); break;
+				case SOUTH: parent->applyEffect(x, y + 1, primary->getEff(this)); break;
+				case EAST: parent->applyEffect(x + 1, y, primary->getEff(this)); break;
 			}
 		}
 	}
@@ -1848,6 +2196,12 @@ void loadDatabase(object o){
 			unitDb.push_back(newUnit);//Adds unit to database
 		}
 		
+		if (i->type == OBJTYPE_DAMTYPE){//If object is a damage type
+			damType newDT;//New type
+			newDT.fromScriptObj(*i);//Loads type
+			damTypeDb.push_back(newDT);//Adds type to database
+		}
+		
 		if (i->type == OBJTYPE_WEAPON){//If object is a weapon
 			weapon newWeapon;//New weapon
 			newWeapon.fromScriptObj(*i);//Loads weapon
@@ -1878,22 +2232,108 @@ void loadDatabase(object o){
 }
 
 //Initialization function
-void game_init(string dbFile, string settingsFile){
+void game_init(string dbFile, string settingsFile, string themeFile){
 	srand(time(NULL));//Randomize
 		
 	uiInit();//Initializes UI
 	image_init();//Initializes image library
 		
-	initWindow(800, 600, "Tales of Gydia");//Window setup
+	initWindow(1000, 600, "Tales of Gydia");//Window setup
 	
+	//Loads game database
 	fileData f (dbFile);//File data for database
 	loadDatabase(f.objGen("db"));//Loads database
-		
+	
+	//Loads game settings
 	fileData s (settingsFile);//Settings file
 	object settings = s.objGen("settings");//Loads settings
 	
-	if (settings.getVar("font_global")) globalFont = TTF_OpenFont(settings.getVar("font_global")->value.c_str(), 12);//Opens global font
-	if (settings.getVar("font_labels")) labelsFont = TTF_OpenFont(settings.getVar("font_labels")->value.c_str(), 12);//Opens global font
+	//[no settings yet!]
+	
+	//Loads game interface data
+	fileData t (themeFile);//Theme file
+	object theme = t.objGen("theme");//Loads theme
+	
+	if (theme.getVar("font_global")) globalFont = TTF_OpenFont(theme.getVar("font_global")->value.c_str(), 12);//Opens global font
+	if (theme.getVar("font_panels_major")) panelFont_major = TTF_OpenFont(theme.getVar("font_panels_major")->value.c_str(), 18);//Opens panel major font
+	if (theme.getVar("font_panels_minor")) panelFont_minor = TTF_OpenFont(theme.getVar("font_panels_minor")->value.c_str(), 14);//Opens panel minor font
+	
+	if (theme.getVar("bar_frame")) bar_frame = CACHEDIMG(theme.getVar("bar_frame")->value);//Gets bar frame
+	if (theme.getVar("bar_frame_offset_x")) bar_frame_offset.x = theme.getVar("bar_frame_offset_x")->intValue();//Gets bar frame offset x
+	if (theme.getVar("bar_frame_offset_y")) bar_frame_offset.y = theme.getVar("bar_frame_offset_y")->intValue();//Gets bar frame offset y
+	
+	if (theme.getVar("bar_hits")) bar_hits = CACHEDIMG(theme.getVar("bar_hits")->value);//Gets hitbar fill
+	if (theme.getVar("bar_hits_offset_x")) bar_hits_offset.x = theme.getVar("bar_hits_offset_x")->intValue();//Gets hitbar offset x
+	if (theme.getVar("bar_hits_offset_y")) bar_hits_offset.y = theme.getVar("bar_hits_offset_y")->intValue();//Gets hitbar offset y
+	
+	if (theme.getVar("bar_mana")) bar_mana = CACHEDIMG(theme.getVar("bar_mana")->value);//Gets manabar fill
+	if (theme.getVar("bar_mana_offset_x")) bar_mana_offset.x = theme.getVar("bar_mana_offset_x")->intValue();//Gets manabar offset x
+	if (theme.getVar("bar_mana_offset_y")) bar_mana_offset.y = theme.getVar("bar_mana_offset_y")->intValue();//Gets manabar offset y
+	
+	if (theme.getVar("infoPanel_img")) infoPanel_pict = CACHEDIMG(theme.getVar("infoPanel_img")->value);//Loads panel picture
+	if (theme.getVar("infoPanel_offset_x")) infoPanel.x = theme.getVar("infoPanel_offset_x")->intValue();//Gets panel offset x
+	if (theme.getVar("infoPanel_offset_y")) infoPanel.y = theme.getVar("infoPanel_offset_y")->intValue();//Gets panel offset x
+	if (theme.getVar("infoPanel_col1")) infoPanel_col1 = strtol(theme.getVar("infoPanel_col1")->value.c_str(), NULL, 0);//Loads panel first color (name box)
+	if (theme.getVar("infoPanel_col2")) infoPanel_col2 = strtol(theme.getVar("infoPanel_col2")->value.c_str(), NULL, 0);//Loads panel second color (stats boxes)
+	if (theme.getVar("infoPanel_col3")) infoPanel_col3 = strtol(theme.getVar("infoPanel_col3")->value.c_str(), NULL, 0);//Loads panel third color (bonuses)
+	if (theme.getVar("infoPanel_col4")) infoPanel_col4 = strtol(theme.getVar("infoPanel_col4")->value.c_str(), NULL, 0);//Loads panel third color (maluses)
+	
+	//Sets up info panel
+	infoPanel.x = bar_frame_offset.x;
+	infoPanel.y = bar_frame_offset.y + bar_frame->h;
+	infoPanel.w = (infoPanel_pict ? infoPanel_pict->w : 200);
+	infoPanel.h = (infoPanel_pict ? infoPanel_pict->h : 200);
+	infoPanel.printMethod = panelPrint;
+	infoPanel.setAlpha(255);
+	
+	//Name text box
+	nameBox.x = 5;
+	nameBox.y = 5;
+	nameBox.w = infoPanel.w - 2 * nameBox.x;
+	nameBox.h = 20;
+	nameBox.setAlpha(0);
+	nameBox.foreColor = infoPanel_col1;
+	nameBox.font = panelFont_major;
+	infoPanel.controls.push_back(&nameBox);
+	
+	//Hp and mp text boxes
+	hpBox = nameBox;
+	hpBox.y += hpBox.h + 5;
+	hpBox.w = infoPanel.w / 2 - 7;
+	hpBox.font = panelFont_minor;
+	hpBox.foreColor = infoPanel_col1;
+	infoPanel.controls.push_back(&hpBox);
+	
+	mpBox = hpBox;
+	mpBox.x = infoPanel.w / 2 + 2;
+	infoPanel.controls.push_back(&mpBox);
+	
+	//Statistics text boxes
+	strBox.x = 5;
+	strBox.y = hpBox.y + hpBox.h + 10;
+	strBox.w = infoPanel.w / 2 - 7;
+	strBox.h = 15;
+	strBox.setAlpha(0);
+	strBox.foreColor = infoPanel_col2;
+	strBox.font = panelFont_minor;
+	infoPanel.controls.push_back(&strBox);
+	
+	intBox = strBox;
+	intBox.x = infoPanel.w / 2 + 2;
+	infoPanel.controls.push_back(&intBox);
+	
+	conBox = strBox;
+	conBox.y += conBox.h + 5;
+	infoPanel.controls.push_back(&conBox);
+	
+	wisBox = intBox;
+	wisBox.y += wisBox.h + 5;
+	infoPanel.controls.push_back(&wisBox);
+	
+	//Effects box
+	effBox = conBox;
+	effBox.y += effBox.h + 20;
+	infoPanel.controls.push_back(&effBox);
 	
 	//Sets operators
 	op bool_equal ("=", 1, ops_bool_equal);
