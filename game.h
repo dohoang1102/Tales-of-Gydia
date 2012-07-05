@@ -33,6 +33,7 @@ int DB_VARIABLEWARNING		= getErrorCode();//Non-lethal variable error in database
 #define OBJTYPE_TERRAIN		"terrain"//Object type terrain
 #define OBJTYPE_DAMTYPE		"damageType"//Object type damage type
 #define OBJTYPE_EFFECT		"effect"//Object type effect
+#define OBJTYPE_PROJECTILE	"projectile"//Object type projectile
 #define OBJTYPE_WEAPON		"weapon"//Object type weapon
 #define OBJTYPE_CLOTH		"cloth"//Object type cloth
 #define OBJTYPE_UNIT		"unit"//Object type unit
@@ -77,6 +78,7 @@ int DB_VARIABLEWARNING		= getErrorCode();//Non-lethal variable error in database
 #define ACT_DYING			0x30//Dying
 #define ACT_DEAD			0x40//Dead
 #define ACT_REST			0x50//Resting
+#define ACT_TURN			0x60//Turning
 
 #define GETACODE(ACT,DIR)	((ACT) | (DIR))//Macro to get action and direction code out of separate action and direction
 #define GETACT(CODE) 		((CODE) & 0xF0)//Macro to get action code out of code with action and direction
@@ -124,6 +126,7 @@ textBox nameBox;//Player name box
 textBox hpBox, mpBox;//Player hp and mp box
 textBox strBox, intBox, conBox, wisBox;//Statistics boxes
 textBox effBox;//Effects box
+list<textBox*> resBox;//Resistance boxes
 
 Uint32 infoPanel_col1 = 0x000000;//Color for main stuff in info panel
 Uint32 infoPanel_col2 = 0x000000;//Secondary color in info panel
@@ -402,9 +405,13 @@ class effect: public content {
 	int constitution;//Constitution bonus
 	int wisdom;//Wisdom bonus
 	
+	string shot;//Id of projectile shot by effect
+	
 	int duration;//Effect duration (0 instant/permanent, else duration in turns)
 	
 	damType type;//Effect damage type (needed only if effect damages someone)
+	
+	list<damType> resistances;//Per-type resistances bonuses
 	
 	bool img;//Flag indicating if image was given
 	image icon;//Icon shown when effect is active
@@ -419,6 +426,7 @@ class effect: public content {
 		intelligence = 0;
 		constitution = 0;
 		wisdom = 0;
+		shot = "";
 		duration = 0;
 		img = false;
 	}
@@ -436,6 +444,7 @@ class effect: public content {
 			var* intelligence = o.getVar("intelligence");//Intelligence variable
 			var* constitution = o.getVar("constitution");//Constitution variable
 			var* wisdom = o.getVar("wisdom");//Wisdom variable
+			var* shot = o.getVar("shot");//Shot variable
 			var* duration = o.getVar("duration");//Duration variable
 			var* type = o.getVar("type");//Type variable
 			object* icon = o.getObj("icon");//Icon variable
@@ -449,9 +458,20 @@ class effect: public content {
 			if (intelligence) this->intelligence = intelligence->intValue();
 			if (constitution) this->constitution = constitution->intValue();
 			if (wisdom) this->wisdom = wisdom->intValue();
+			if (shot) this->shot = shot->value;
 			if (duration) this->duration = duration->intValue();
 			if (type && get(&damTypeDb, type->value)) this->type = *get(&damTypeDb, type->value);
 			if (icon) {this->icon.fromScriptObj(*icon); img = true;}
+			
+			//Loads resistances
+			deque<object>::iterator i;//Object iterator
+			for (i = o.o.begin(); i != o.o.end(); i++){//For each sub-object
+				if (i->type == OBJTYPE_DAMTYPE && get(&damTypeDb, i->name)){//If object is a damage type and that damage type exists
+					damType newDT;//New damage type
+					newDT.fromScriptObj(*i);//Loads damage type
+					resistances.push_back(newDT);//Adds to resistances
+				}
+			}
 		}
 	}
 };
@@ -500,6 +520,64 @@ bool sortCloths_compare(cloth* a, cloth* b){
 }
 
 list <cloth> clothDb;//Cloths database
+
+//Projectile class
+class projectile: public content{
+	public:
+	animSet anims;//Projectile animations
+	effect onTarget;//Effect on target unit
+	int range;//Projectile range (expires after getting out)
+	
+	int x, y;//Projectile position
+	int dX, dY;//Position variation (for moving animation)
+	int direction;//Projectile direction
+	
+	int dist;//Distance made by projectile
+	
+	map *parent;//Projectile parent map
+	
+	//Constructor
+	projectile(){
+		range = 1;
+		x = 0;
+		y = 0;
+		dX = 0;
+		dY = 0;
+		direction = NORTH;
+		dist = 0;
+		parent = NULL;
+	}
+	
+	//Function to load from script object
+	void fromScriptObj(object o){
+		if (o.type == OBJTYPE_PROJECTILE){//If type is matching
+			content::fromScriptObj(o);//Loads base content data
+			
+			object* anims = o.getObj("anims");//Animations object
+			object* onTarget = o.getObj("onTarget");//Effect object
+			var* range = o.getVar("range");//Range variable
+			
+			if (anims) this->anims.fromScriptObj(*anims);//Loads anims
+			if (onTarget) this->onTarget.fromScriptObj(*onTarget);//Loads effect on target
+			if (range) this->range = range->intValue();//Gets range
+		}
+	}
+	
+	//Projectile printing function
+	void print(SDL_Surface* target, int x, int y){
+		anims.print(target, x + dX, y + dY);//Prints current animation
+	}
+	
+	//Next frame function
+	void nextFrame();
+};
+
+//Function to compare projectiles by position
+bool sortProj_compare(projectile* a, projectile* b){
+	return a->y < b->y || (a->y == b->y && a->x < b->x);
+}
+
+list<projectile> projectileDb;//Projectile database
 
 //Weapon class
 class weapon: public content{
@@ -752,6 +830,7 @@ class unit: public content{
 		if (GETACT(o.code) == ACT_WALK) walk(GETDIR(o.code));//Checks for walking orders
 		else if (GETACT(o.code) == ACT_STRIKE) strike();//Checks for striking orders
 		else if (GETACT(o.code) == ACT_REST) rest();//Checks for resting orders
+		else if (GETACT(o.code) == ACT_TURN) turn(GETDIR(o.code));//Checks for turning orders
 		else stop();//Stops on any other code
 	}
 	
@@ -894,6 +973,38 @@ class unit: public content{
 		for (e = tempEffects.begin(); e != tempEffects.end(); e++) result += e->wisdom;//Adds each temporary effect
 		
 		return (result > 0 ? result : 0);//Returns result
+	}
+	
+	//Function to get base damage multiplier for given type
+	double baseMult(string tId){
+		damType* base = get(&resistances, tId);//Base resistance
+		
+		if (base) return base->mult;//Returns result
+		else return 1;
+	}
+	
+	//Function to get damage multiplier for given damage type
+	double typeMult(string tId){
+		double result = baseMult(tId);//Result
+		
+		list<effect>::iterator i;//Effect iterator
+		for (i = tempEffects.begin(); i != tempEffects.end(); i++){//For each temporary effect
+			damType* res = get(&i->resistances, tId);//Effect resistance bonus
+			if (res) result += res->mult;//Adds effect to result
+		}
+		
+		deque<cloth*>::iterator c;//Cloth iterator
+		for (c = cloths.begin(); c != cloths.end(); c++){//For each cloth
+			damType* res = get(&(*c)->onEquip.resistances, tId);//Cloth resistance bonus
+			if (res) result += res->mult;//Adds effect to result
+		}
+		
+		if (primary){//If there's a primary weapon
+			damType* res = get(&primary->onEquip.resistances, tId);//Primary weapon resistance bonus
+			if (res) result += res->mult;//Adds effect to result
+		}
+		
+		return result;
 	}
 	
 	//Function to apply an effect to the unit
@@ -1059,8 +1170,8 @@ class controller{
 	}
 };
 
-//Function to compare unit and deco according to position
-bool compare_unitDeco(unit* a, deco* b){
+//Function to compare objects by position
+template <class aClass, class bClass> bool compare_position (aClass* a, bClass* b){
 	return a->y < b->y || (a->y == b->y && a->x < b->x);
 }
 
@@ -1078,6 +1189,7 @@ class map: public content{
 	
 	deque<unit*> units;//Units on map
 	deque<deco*> decos;//Decorations on map
+	deque<projectile*> projs;//Projectiles on map
 	
 	//Constructor
 	map(){
@@ -1296,6 +1408,11 @@ class map: public content{
 		sort(decos.begin(), decos.end(), sortDecos_compare);//Sorts decos
 	}
 	
+	//Function to sort projectiles according to position
+	void sortProjs(){
+		sort(projs.begin(), projs.end(),sortProj_compare);
+	}
+	
 	//Function to create an unit on map
 	unit* createUnit(string id, string name, int x, int y, int side){
 		unit* u = get(&unitDb, id);//Required unit
@@ -1379,16 +1496,22 @@ class map: public content{
 		
 		deque<unit*>::iterator u = units.begin();//Unit iterator
 		deque<deco*>::iterator d = decos.begin();//Deco iterator
+		deque<projectile*>::iterator p = projs.begin();//Projectile iterator
 		
-		while (u != units.end() || d != decos.end()){//While there's still something to print
-			if (u != units.end() && (d == decos.end() || compare_unitDeco(*u, *d))){//If unit is before deco
+		while (u != units.end() || d != decos.end() || p != projs.end()){//While there's still something to print
+			if (u != units.end() && (d == decos.end() || compare_position(*u, *d)) && (p == projs.end() || compare_position(*u, *p))){//If unit is before deco and projectile
 				if (c && uDist(c, *u) < c->sight) (*u)->print(target, offset.x + tilesSide * (*u)->x + tilesSide / 2, offset.y + tilesSide * (*u)->y + tilesSide / 2);//Prints unit
 				u++;//Next unit
 			}
 			
-			else if (d != decos.end()){//Else
+			else if (d != decos.end() && (p == projs.end() || compare_position(*d, *p))){//Else if deco is before projectile
 				(*d)->print(target, offset.x + tilesSide * (*d)->x + tilesSide / 2, offset.y + tilesSide * (*d)->y + tilesSide / 2);//Prints deco
 				d++;//Next deco
+			}
+			
+			else if (p != projs.end()){//Else
+				(*p)->print(target, offset.x + tilesSide * (*p)->x + tilesSide / 2, offset.y + tilesSide * (*p)->y + tilesSide / 2);//Prints projectile
+				p++;//Next projectile
 			}
 		}
 		
@@ -1549,11 +1672,23 @@ class map: public content{
 			
 			if (units.size() != oldSize) i -= oldSize - units.size();//Corrects counter position if deque size has changed
 		}
+		
+		for (i = 0; i < projs.size(); i++){//For each projectile
+			int oldSize = projs.size();//Projectile amount before this loop
+			
+			projs[i]->nextFrame();//Unit next frame
+			
+			if (projs.size() != oldSize) i -= oldSize - projs.size();//Corrects counter position if deque size has changed
+		}
 	}
 	
 	//Function to apply effect to unit in given tile
-	void applyEffect(int x, int y, effect e){
+	void applyEffect(int x, int y, effect e, int direction){
 		deque<unit*>::iterator i;//Iterator
+		
+		if (e.shot != ""){//If there's a projectile to shoot
+			shoot (x, y, direction, e.shot);//Shoots
+		}
 		
 		for(i = units.begin(); i != units.end(); i++){//For each unit
 			if ((*i)->x == x && (*i)->y == y){//If unit is in given position
@@ -1621,7 +1756,22 @@ class map: public content{
 			
 		return NULL;//Returns null if no unit was found
 	}
-} activeMap;
+	
+	//Function to shoot a projectile
+	void shoot(int x, int y, int dir, string pId){
+		projectile* p = new projectile;//New projectile
+		projectile* q = get(&projectileDb, pId);//Gets projectile
+		
+		if (q) *p = *q;
+		p->x = x;
+		p->y = y;
+		p->direction = dir;
+		p->anims.setAnim(dirToString(dir));
+		p->parent = this;
+		
+		projs.push_back(p);//Adds projectile
+	}
+};
 
 list <map> mapDb;//Maps database
 
@@ -1826,8 +1976,7 @@ class campaign: public content{
 	//Turn moves function
 	void turnMoves(){
 		if (turn == 0 && player.ready()){//If player turn
-			player.getInput();//Gets player input
-			
+			if (!player.moved()) player.getInput();//Gets player input
 			if (player.moved() && player.ready()) nextTurn();//Goes to AI turn if moved
 		}
 		
@@ -1898,6 +2047,18 @@ class campaign: public content{
 			list<effect>::iterator i;//Effect iterator
 			for (i = player.units[0]->tempEffects.begin(); i != player.units[0]->tempEffects.end(); i++)//For each temporary effect on unit
 				effBox.text += i->description + " (" + toString(i->duration + 1) + ") ";//Adds effect info to box
+				
+			//Sets resistance boxes
+			list<textBox*>::iterator t;//Text box iterator
+			for (t = resBox.begin(); t != resBox.end(); t++){//For each text box
+				double effRes = player.units[0]->typeMult((*t)->id);//Gets effect resistance
+				
+				(*t)->text = (*t)->id + " " + toString((1 - effRes) * 100) + "\%";//Sets label text
+				
+				if (effRes > 1) (*t)->foreColor = infoPanel_col4;
+				else if (effRes < 1) (*t)->foreColor = infoPanel_col3;
+				else if (effRes == 1) (*t)->foreColor = infoPanel_col2;
+			}
 		}
 	}
 	
@@ -1922,6 +2083,43 @@ class campaign: public content{
 };
 
 list<campaign> campaignDb;//Campaign database
+
+//Projectile next frame function
+void projectile::nextFrame(){
+	anims.next();
+	
+	switch (direction){
+		case NORTH:
+		dY -= MOTIONSTEP;
+		if (dY <= -tilesSide) {dY = 0; y--; dist++;}
+		break;
+		
+		case WEST:
+		dX -= MOTIONSTEP;
+		if (dX <= -tilesSide) {dX = 0; x--; dist++;}
+		break;
+		
+		case SOUTH:
+		dY += MOTIONSTEP;
+		if (dY >= tilesSide) {dY = 0; y++; dist++;}
+		break;
+		
+		case EAST:
+		dX += MOTIONSTEP;
+		if (dX >= tilesSide) {dX = 0; x++; dist++;}
+		break;
+	}
+	
+	if (parent){//If there's a parent map
+		if (!parent->isFree(x, y) || dist >= range - 1){//If reached destination
+			parent->applyEffect(x, y, onTarget, direction);//Applies effect on parent map
+			
+			//Removes projectile from parent
+			deque<projectile*>::iterator i;//Projectile iterator
+			for (i = parent->projs.begin(); i != parent->projs.end(); i++) if (*i == this) {parent->projs.erase(i); break;}//Removes projectile if it is this
+		}
+	}
+}
 
 //Execution function
 int script::exec(campaign* c){
@@ -2021,28 +2219,28 @@ void unit::walk(int direction){
 		//Checks free tiles
 		switch (direction){//According to direction
 			case NORTH:
-			if (!parent->isFree(x, y - 1)){
+			if (GETDIR(action) != direction || !parent->isFree(x, y - 1)){
 				turn(NORTH);
 				return;
 			}
 			break;
 			
 			case WEST:
-			if (!parent->isFree(x - 1, y)){
+			if (GETDIR(action) != direction || !parent->isFree(x - 1, y)){
 				turn(WEST);
 				return;
 			}
 			break;
 			
 			case SOUTH:
-			if (!parent->isFree(x, y + 1)){
+			if (GETDIR(action) != direction || !parent->isFree(x, y + 1)){
 				turn(SOUTH);
 				return;
 			}
 			break;
 			
 			case EAST:
-			if (!parent->isFree(x + 1, y)){
+			if (GETDIR(action) != direction || !parent->isFree(x + 1, y)){
 				turn(EAST);
 				return;
 			}
@@ -2117,10 +2315,10 @@ void unit::nextFrame(){
 		
 		if (anims.current()->curFrame == primary->strikeFrame && parent){//At half striking animation
 			switch (GETDIR(action)){//According to direction
-				case NORTH: parent->applyEffect(x, y - 1, primary->getEff(this)); break;
-				case WEST: parent->applyEffect(x - 1, y, primary->getEff(this)); break;
-				case SOUTH: parent->applyEffect(x, y + 1, primary->getEff(this)); break;
-				case EAST: parent->applyEffect(x + 1, y, primary->getEff(this)); break;
+				case NORTH: parent->applyEffect(x, y - 1, primary->getEff(this), GETDIR(action)); break;
+				case WEST: parent->applyEffect(x - 1, y, primary->getEff(this), GETDIR(action)); break;
+				case SOUTH: parent->applyEffect(x, y + 1, primary->getEff(this), GETDIR(action)); break;
+				case EAST: parent->applyEffect(x + 1, y, primary->getEff(this), GETDIR(action)); break;
 			}
 		}
 	}
@@ -2224,6 +2422,12 @@ void loadDatabase(object o){
 			campaign newCampaign;//New campaign
 			newCampaign.fromScriptObj(*i);//Loads campaign
 			campaignDb.push_back(newCampaign);//Adds campaign
+		}
+		
+		if (i->type == OBJTYPE_PROJECTILE){//If object is a projectile
+			projectile newProj;//New projectile
+			newProj.fromScriptObj(*i);//Loads projectile
+			projectileDb.push_back(newProj);//Adds projectile
 		}
 	}
 	
@@ -2333,7 +2537,25 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 	//Effects box
 	effBox = conBox;
 	effBox.y += effBox.h + 20;
+	effBox.w = nameBox.w;
 	infoPanel.controls.push_back(&effBox);
+	
+	//Resistance boxes
+	list<damType>::iterator i;//Damage type iterator
+	int n = 0;
+	for (i = damTypeDb.begin(); i != damTypeDb.end(); i++){//For each damage type loaded
+		textBox *t = new textBox;//New text box
+		
+		*t = conBox;
+		t->id = i->id;
+		t->y = effBox.y + effBox.h + 15 + n * (t->h + 1);
+		t->text = t->id;
+		
+		infoPanel.controls.push_back(t);
+		resBox.push_back(t);
+		
+		n++;
+	}
 	
 	//Sets operators
 	op bool_equal ("=", 1, ops_bool_equal);

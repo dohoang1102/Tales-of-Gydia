@@ -21,6 +21,7 @@ string gV(string id){
 
 int main(int argc, char* argv[]){
 	bool running = true;
+	bool input = true;
 	SDL_Event e;
 	
 	game_init("data\\cfg\\db.cfg", "data\\cfg\\settings.cfg", "data\\cfg\\theme.cfg");
@@ -49,7 +50,8 @@ int main(int argc, char* argv[]){
 		SDL_Flip(window);
 		
 		current.nextFrame();
-		current.turnMoves();
+		if (input) current.turnMoves();
+		input = !input;
 		
 		curFps = 1000 / (SDL_GetTicks() - lfb);
 		if (SDL_GetTicks() - lfb < 1000 / fps) SDL_Delay(1000 / fps + lfb - SDL_GetTicks());
