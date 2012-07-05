@@ -4,7 +4,7 @@
 #include "game.h"
 
 int lfb = 0;
-int fps = 30;
+int fps = 40;
 
 string sum (string a, string b){
 	return toString(atoi(a.c_str()) + atoi(b.c_str()));

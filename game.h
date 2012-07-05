@@ -54,6 +54,7 @@ int DB_VARIABLEWARNING		= getErrorCode();//Non-lethal variable error in database
 
 //Movement settings
 #define MOTIONSTEP			4//Pixels of motion for each frame when units walk
+#define PROJSTEP			8//Pixels of motion for each frame of projectiles flying
 
 //Event flags
 #define EVENT_NORMAL		0b00000000//Normal event, triggered whenever control script is verified
@@ -2090,22 +2091,22 @@ void projectile::nextFrame(){
 	
 	switch (direction){
 		case NORTH:
-		dY -= MOTIONSTEP;
+		dY -= PROJSTEP;
 		if (dY <= -tilesSide) {dY = 0; y--; dist++;}
 		break;
 		
 		case WEST:
-		dX -= MOTIONSTEP;
+		dX -= PROJSTEP;
 		if (dX <= -tilesSide) {dX = 0; x--; dist++;}
 		break;
 		
 		case SOUTH:
-		dY += MOTIONSTEP;
+		dY += PROJSTEP;
 		if (dY >= tilesSide) {dY = 0; y++; dist++;}
 		break;
 		
 		case EAST:
-		dX += MOTIONSTEP;
+		dX += PROJSTEP;
 		if (dX >= tilesSide) {dX = 0; x++; dist++;}
 		break;
 	}
