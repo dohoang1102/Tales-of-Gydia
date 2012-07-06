@@ -6,19 +6,6 @@
 int lfb = 0;
 int fps = 40;
 
-string sum (string a, string b){
-	return toString(atoi(a.c_str()) + atoi(b.c_str()));
-}
-
-string mult (string a, string b){
-	return toString(atoi(a.c_str()) * atoi(b.c_str()));
-}
-
-string gV(string id){
-	if (id == "a") return toString(5);
-	else return toString(0);
-}
-
 int main(int argc, char* argv[]){
 	bool running = true;
 	bool input = true;

@@ -777,7 +777,7 @@ class unit: public content{
 	}
 	
 	//Walking function
-	void walk(int);
+	void walk(int, bool = true);
 	
 	//Turning function (faces given direction)
 	void turn(int direction){
@@ -886,7 +886,7 @@ class unit: public content{
 	}
 	
 	//Function to make AI move (prototype)
-	void AI();
+	void AI(bool = true);
 	
 	//Function to get unit hits applying effects
 	int hits(){
@@ -1134,25 +1134,7 @@ class controller{
 	}
 	
 	//Function to run units' AI functions
-	bool AI(){
-		if (units.size() == 0) return true;//Returns true if there are no units
-		
-		begin:
-		if (AI_current >= 0 || units[AI_current - 1]->ready() || units[AI_current - 1]->action == ACT_DEAD){//If current unit is the first or the previous is ready or dead
-			if (AI_current == units.size()){//If that was last unit
-				AI_current = 0;//Goes back to first unit
-				return true;//Returns true
-			}
-			
-			else {//Else
-				units[AI_current]->AI();//Execs current unit's AI function
-				AI_current++;//Next unit
-				
-				if (units[AI_current - 1]->ready() || units[AI_current - 1]->action == ACT_DEAD) goto begin;//Restarts from beginning if unit did nothing
-				return false;//Returns false
-			}
-		}
-	}
+	bool AI();
 	
 	//Function to reset moved flag for all units
 	void resetMoved(){
@@ -1772,6 +1754,11 @@ class map: public content{
 		
 		projs.push_back(p);//Adds projectile
 	}
+	
+	//Function to determine if there are still projectiles running
+	bool projectiles(){
+		return projs.size() == 0;
+	}
 };
 
 list <map> mapDb;//Maps database
@@ -1978,7 +1965,7 @@ class campaign: public content{
 	void turnMoves(){
 		if (turn == 0 && player.ready()){//If player turn
 			if (!player.moved()) player.getInput();//Gets player input
-			if (player.moved() && player.ready()) nextTurn();//Goes to AI turn if moved
+			if (player.moved() && player.ready() && m->projectiles()) nextTurn();//Goes to AI turn if moved
 		}
 		
 		if (turn == 1 && player.ready() && ai.readyOrDead() && ai.AI())//When all AI units have been moved
@@ -2215,33 +2202,33 @@ int script::exec(campaign* c){
 }
 
 //Walking function
-void unit::walk(int direction){
+void unit::walk(int direction, bool turnOnly){
 	if (parent){//If there's a reference map
 		//Checks free tiles
 		switch (direction){//According to direction
 			case NORTH:
-			if (GETDIR(action) != direction || !parent->isFree(x, y - 1)){
+			if (GETDIR(action) != direction && turnOnly || !parent->isFree(x, y - 1)){
 				turn(NORTH);
 				return;
 			}
 			break;
 			
 			case WEST:
-			if (GETDIR(action) != direction || !parent->isFree(x - 1, y)){
+			if (GETDIR(action) != direction && turnOnly || !parent->isFree(x - 1, y)){
 				turn(WEST);
 				return;
 			}
 			break;
 			
 			case SOUTH:
-			if (GETDIR(action) != direction || !parent->isFree(x, y + 1)){
+			if (GETDIR(action) != direction && turnOnly || !parent->isFree(x, y + 1)){
 				turn(SOUTH);
 				return;
 			}
 			break;
 			
 			case EAST:
-			if (GETDIR(action) != direction || !parent->isFree(x + 1, y)){
+			if (GETDIR(action) != direction && turnOnly || !parent->isFree(x + 1, y)){
 				turn(EAST);
 				return;
 			}
@@ -2341,7 +2328,7 @@ void unit::nextFrame(){
 }
 
 //Function to make unit AI move
-void unit::AI(){
+void unit::AI(bool turnOnly){
 	if (action == ACT_DEAD) return;//Exits if unit is dead
 	
 	if (parent){//If there's a parent scenario
@@ -2365,10 +2352,31 @@ void unit::AI(){
 		}
 		
 		//Gives walking orders
-		if (closest->y < y && parent->isFree(x, y - 1)) walk(NORTH);
-		else if (closest->x < x && parent->isFree(x - 1, y)) walk(WEST);
-		else if (closest->y > y && parent->isFree(x, y + 1)) walk(SOUTH);
-		else if (closest->x > x && parent->isFree(x + 1, y)) walk(EAST);
+		if (closest->y < y && parent->isFree(x, y - 1)) walk(NORTH, turnOnly);
+		else if (closest->x < x && parent->isFree(x - 1, y)) walk(WEST, turnOnly);
+		else if (closest->y > y && parent->isFree(x, y + 1)) walk(SOUTH, turnOnly);
+		else if (closest->x > x && parent->isFree(x + 1, y)) walk(EAST, turnOnly);
+	}
+}
+
+//Controller AI function
+bool controller::AI(){
+	if (units.size() == 0) return true;//Returns true if there are no units
+	
+	begin:
+	if ((AI_current >= 0 || units[AI_current - 1]->ready() || units[AI_current - 1]->action == ACT_DEAD)/* && (!units[AI_current]->parent || units[AI_current]->parent->projectiles())*/){//If current unit is the first or the previous is ready or dead
+		if (AI_current == units.size()){//If that was last unit
+			AI_current = 0;//Goes back to first unit
+			return true;//Returns true
+		}
+		
+		else {//Else
+			units[AI_current]->AI(false);//Execs current unit's AI function
+			AI_current++;//Next unit
+			
+			if (units[AI_current - 1]->ready() || units[AI_current - 1]->action == ACT_DEAD) goto begin;//Restarts from beginning if unit did nothing
+			return false;//Returns false
+		}
 	}
 }
 
