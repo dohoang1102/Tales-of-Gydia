@@ -105,12 +105,14 @@ int tilesSide = 32;//Side of each tile of the map
 deque<op> ops_bool;//Boolean script operators
 
 //Settings
+
+//User interface
 //Fonts
 TTF_Font* globalFont = NULL;//Global generic font
 TTF_Font* panelFont_major = NULL;//Panel major font
 TTF_Font* panelFont_minor = NULL;//Panel minor font
+TTF_Font* dialogFont = NULL;//Font for dialogs
 
-//User interface
 //User interface data - game HUD
 SDL_Surface* bar_frame = NULL;//Frame for hit and mana bars
 SDL_Rect bar_frame_offset = {0, 0};//Frame offset
@@ -129,10 +131,17 @@ textBox strBox, intBox, conBox, wisBox;//Statistics boxes
 textBox effBox;//Effects box
 list<textBox*> resBox;//Resistance boxes
 
+SDL_Surface* dialog_pict = NULL;//Dialog box picture
+SDL_Surface* dialog_text = NULL;//Dialog text picture
+textBox dialogBox;//Dialog box
+
+//Colors
 Uint32 infoPanel_col1 = 0x000000;//Color for main stuff in info panel
 Uint32 infoPanel_col2 = 0x000000;//Secondary color in info panel
 Uint32 infoPanel_col3 = 0x000000;//Color for bonuses in info panel
 Uint32 infoPanel_col4 = 0x000000;//Color for maluses in info panel
+
+Uint32 dialog_col = 0xFFFFFF;//Color for dialog boxes
 
 //Boolean operators functions
 string ops_bool_equal(string a, string b){ return toString(a == b); }
@@ -159,6 +168,27 @@ void panelPrint(SDL_Surface* target, control* p){
 		(*i)->x -= e->x;
 		(*i)->y -= e->y;
 	}
+}
+
+//Dialog printing function
+void dialogPrint(SDL_Surface* target, control* p){
+	textBox* e = (textBox*) p;//Converts to text boex
+	
+	SDL_Rect offset = {e->x, e->y};//Offet rectangle
+	SDL_BlitSurface(dialog_pict, NULL, target, &offset);//Prints dialog picture
+	
+	if (dialog_text){//If there's a text to print
+		offset.x = e->x + (e->w - dialog_text->w) / 2;
+		offset.y = e->y + (e->h - dialog_text->h) / 2;
+		SDL_BlitSurface(dialog_text, NULL, target, &offset);//Prints text
+	}
+}
+
+//Function to generate dialog text picture
+void genDialogText(string s){
+	if (s == "" || !dialogFont) return;//Exits function if there's no text or no font
+	if (dialog_text) SDL_FreeSurface(dialog_text);//Frees old surface
+	dialog_text = TTF_RenderText_Blended(dialogFont, s.c_str(), SDL_Color {(dialog_col & 0xFF0000) >> 16, (dialog_col & 0x00FF00) >> 8, dialog_col & 0xFF});//Generates new text
 }
 
 //Function to convert direction in string
@@ -1168,7 +1198,6 @@ class map: public content{
 	
 	SDL_Surface* pict;//Picture of the map
 	SDL_Surface* mmap;//Picture of the minimap
-	SDL_Surface* sightMask;//Picture of sight mask
 	
 	deque<unit*> units;//Units on map
 	deque<deco*> decos;//Decorations on map
@@ -1183,7 +1212,6 @@ class map: public content{
 		tiles = NULL;
 		pict = NULL;
 		mmap = NULL;
-		sightMask = NULL;
 		
 		resize(1,1);
 	}
@@ -1451,17 +1479,6 @@ class map: public content{
 		}
 	}
 	
-	//Function to make hero sight mask
-	void makeSightMask(unit* u, int w, int h){
-		if (sightMask) SDL_FreeSurface(sightMask);//Frees mask if existing
-		
-		sightMask = SDL_CreateRGBSurface(SDL_SWSURFACE | SDL_SRCALPHA, w, h, 32, 0, 0, 0, 0);//Makes surface
-		filledCircleColor(sightMask, w / 2, h / 2, u->sight * tilesSide, 0xFFFFFFFF);//Draws circle
-		
-		SDL_SetColorKey(sightMask, SDL_SRCCOLORKEY, 0xFFFFFF);
-		SDL_SetAlpha(sightMask, SDL_SRCALPHA, 64);
-	}
-	
 	//Function to print picture of the map
 	void print(SDL_Surface* target, int x, int y, unit* c = NULL){
 		SDL_Rect offset;//Offset rectangle
@@ -1483,7 +1500,7 @@ class map: public content{
 		
 		while (u != units.end() || d != decos.end() || p != projs.end()){//While there's still something to print
 			if (u != units.end() && (d == decos.end() || compare_position(*u, *d)) && (p == projs.end() || compare_position(*u, *p))){//If unit is before deco and projectile
-				if (c && uDist(c, *u) < c->sight) (*u)->print(target, offset.x + tilesSide * (*u)->x + tilesSide / 2, offset.y + tilesSide * (*u)->y + tilesSide / 2);//Prints unit
+				(*u)->print(target, offset.x + tilesSide * (*u)->x + tilesSide / 2, offset.y + tilesSide * (*u)->y + tilesSide / 2);//Prints unit
 				u++;//Next unit
 			}
 			
@@ -1497,8 +1514,6 @@ class map: public content{
 				p++;//Next projectile
 			}
 		}
-		
-		if (sightMask) SDL_BlitSurface(sightMask, NULL, target, NULL);//Prints sight mask
 	}
 	
 	//Function to print minimap
@@ -1869,7 +1884,9 @@ class campaign: public content{
 	int curSequence;//Current sequence index
 	
 	int turnCount;//Turn count
-		
+
+	deque<string> dialogSeq;//Current dialog sequence
+	
 	//Constructor
 	campaign(){
 		m = NULL;
@@ -1944,6 +1961,11 @@ class campaign: public content{
 		}
 		
 		infoPanel.print(target);
+		
+		//Dialogs
+		if (dialogSeq.size() > 0){//If needs to show dialog
+			dialogBox.print(target);
+		}
 	}
 	
 	//Next sequence function
@@ -1963,6 +1985,8 @@ class campaign: public content{
 	
 	//Turn moves function
 	void turnMoves(){
+		if (dialogSeq.size() > 0) return;//Does nothing if there's dialog text
+		
 		if (turn == 0 && player.ready()){//If player turn
 			if (!player.moved()) player.getInput();//Gets player input
 			if (player.moved() && player.ready() && m->projectiles()) nextTurn();//Goes to AI turn if moved
@@ -1976,8 +2000,6 @@ class campaign: public content{
 	void setup(){
 		curSequence = 0;//Sets first sequence
 		if (seq.size() > 0) seq.front().begin.exec(this);//Execs first sequence beginning script
-		
-		if (player.units.size() > 0) m->makeSightMask(player.units[0], window->w, window->h);//Makes sight mask
 	}
 	
 	//End turn function
@@ -1993,6 +2015,15 @@ class campaign: public content{
 			
 			player.resetMoved();
 			ai.resetMoved();
+		}
+	}
+	
+	//Function to move on to next dialog
+	void nextDialog(){
+		if (dialogSeq.size() > 0){//If there are still dialogs
+			dialogSeq.pop_front();//Removes first dialog text
+			
+			if (dialogSeq.size() > 0) genDialogText(dialogSeq[0]);//Generates next dialog text
 		}
 	}
 	
@@ -2195,6 +2226,13 @@ int script::exec(campaign* c){
 		
 		else if (tokens[0] == "endSequence"){//End sequence instruction
 			c->nextSeq();//Moves to next sequence
+		}
+		
+		else if (tokens[0] == "dialog" && tokens.size() >= 2){//Dialog instruction
+			c->dialogSeq.push_back(cmds[i].substr(cmds[i].find(tokens[1])));//Adds dialog
+			
+			if (c->dialogSeq.size() == 1)//If it was the first dialog
+				genDialogText(c->dialogSeq[0]);//Generates text
 		}
 	}
 	
@@ -2470,6 +2508,7 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 	if (theme.getVar("font_global")) globalFont = TTF_OpenFont(theme.getVar("font_global")->value.c_str(), 12);//Opens global font
 	if (theme.getVar("font_panels_major")) panelFont_major = TTF_OpenFont(theme.getVar("font_panels_major")->value.c_str(), 18);//Opens panel major font
 	if (theme.getVar("font_panels_minor")) panelFont_minor = TTF_OpenFont(theme.getVar("font_panels_minor")->value.c_str(), 14);//Opens panel minor font
+	if (theme.getVar("font_dialogs")) dialogFont = TTF_OpenFont(theme.getVar("font_dialogs")->value.c_str(), 14);//Opens dialog font
 	
 	if (theme.getVar("bar_frame")) bar_frame = CACHEDIMG(theme.getVar("bar_frame")->value);//Gets bar frame
 	if (theme.getVar("bar_frame_offset_x")) bar_frame_offset.x = theme.getVar("bar_frame_offset_x")->intValue();//Gets bar frame offset x
@@ -2490,6 +2529,9 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 	if (theme.getVar("infoPanel_col2")) infoPanel_col2 = strtol(theme.getVar("infoPanel_col2")->value.c_str(), NULL, 0);//Loads panel second color (stats boxes)
 	if (theme.getVar("infoPanel_col3")) infoPanel_col3 = strtol(theme.getVar("infoPanel_col3")->value.c_str(), NULL, 0);//Loads panel third color (bonuses)
 	if (theme.getVar("infoPanel_col4")) infoPanel_col4 = strtol(theme.getVar("infoPanel_col4")->value.c_str(), NULL, 0);//Loads panel third color (maluses)
+	
+	if (theme.getVar("dialogBox_img")) dialog_pict = CACHEDIMG(theme.getVar("dialogBox_img")->value);//Loads dialog picture
+	if (theme.getVar("dialogBox_col")) dialog_col = strtol(theme.getVar("dialogBox_col")->value.c_str(), NULL, 0);//Loads dialog color
 	
 	//Sets up info panel
 	infoPanel.x = bar_frame_offset.x;
@@ -2565,6 +2607,13 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 		
 		n++;
 	}
+	
+	//Dialog box
+	dialogBox.x = window->w / 2 - dialog_pict->w / 2;
+	dialogBox.y = window->h - dialog_pict->h;
+	dialogBox.w = dialog_pict->w;
+	dialogBox.h = dialog_pict->h;
+	dialogBox.printMethod = dialogPrint;
 	
 	//Sets operators
 	op bool_equal ("=", 1, ops_bool_equal);

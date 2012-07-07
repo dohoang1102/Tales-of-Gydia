@@ -24,6 +24,7 @@ int main(int argc, char* argv[]){
 		while (SDL_PollEvent(&e)){
 			if (e.type == SDL_QUIT) running = false;
 			else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) running = false;
+			else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_RETURN) current.nextDialog();
 		}
 		
 		SDL_FillRect(window, &window->clip_rect, 0);
