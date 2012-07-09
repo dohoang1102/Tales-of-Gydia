@@ -13,18 +13,42 @@ int main(int argc, char* argv[]){
 	
 	game_init("data\\cfg\\db.cfg", "data\\cfg\\settings.cfg", "data\\cfg\\theme.cfg");
 	
-	campaign current = *get(&campaignDb, "tutorial");
+	current = *get(&campaignDb, "tutorial");
 	current.setup();
 
 	int curFps = 1;
+	
+	current.player.units[0]->giveItem("apple");
+	current.player.units[0]->giveItem("staff");
+	current.player.units[0]->giveItem("legs_pants_greenish");
 	
 	while (running){
 		lfb = SDL_GetTicks();
 		
 		while (SDL_PollEvent(&e)){
 			if (e.type == SDL_QUIT) running = false;
-			else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) running = false;
-			else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_RETURN) current.nextDialog();
+			else if (e.type == SDL_KEYDOWN){
+				switch (e.key.keysym.sym){
+					case SDLK_RETURN:
+					if (current.view == GAME) current.nextDialog();
+					break;
+					
+					case SDLK_ESCAPE:
+					if (current.view != GAME) current.view = GAME;
+					else running = false;
+					break;
+					
+					case SDLK_i:
+					current.view = INVENTORY;
+					break;
+					
+					case SDLK_u:
+					current.view = PLAYER;
+					break;
+				}
+			}
+			
+			current.events(e);
 		}
 		
 		SDL_FillRect(window, &window->clip_rect, 0);

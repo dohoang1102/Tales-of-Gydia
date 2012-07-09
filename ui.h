@@ -481,11 +481,12 @@ class imgBox: public control{
 	//Image.h image box class
 	class imageBox: public control{
 		public:
-		image i;//Image to be shown
+		image* i;//Image to be shown
 		
 		//Constructor
 		imageBox(){
 			type = IMAGEBOX;
+			i = NULL;
 			
 			lockPosition = true;
 			
@@ -758,6 +759,15 @@ class panel: public control{
 			(*i)->setClickArea();
 		}
 	}
+	
+	//Function to get focused control
+	control* getFocused(){
+		list<control*>::iterator i;//Iterator for controls
+		for (i = controls.begin(); i != controls.end(); i++)//For each control
+			if ((*i)->isFocused()) return *i;//Returns control if focused
+		
+		return NULL;
+	}
 };
 
 //Default panel printing function
@@ -830,7 +840,7 @@ void imgBox_print_default(SDL_Surface* target, imgBox* e){
 	//Default image.h image box printing function
 	void imageBox_print_default(SDL_Surface* target, imageBox* e){
 		boxColor(target, e->x, e->y, e->x + e->w, e->y + e->h, e->getBackColor());//Prints filled rectangle
-		e->i.print(target, e->x + e->w / 2, e->y + e->h / 2);//Prints image
+		if (e->i) e->i->print(target, e->x + e->w / 2, e->y + e->h / 2);//Prints image
 	}
 #endif
 

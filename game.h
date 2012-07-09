@@ -34,6 +34,7 @@ int DB_VARIABLEWARNING		= getErrorCode();//Non-lethal variable error in database
 #define OBJTYPE_DAMTYPE		"damageType"//Object type damage type
 #define OBJTYPE_EFFECT		"effect"//Object type effect
 #define OBJTYPE_PROJECTILE	"projectile"//Object type projectile
+#define OBJTYPE_ITEM		"item"//Object type item
 #define OBJTYPE_WEAPON		"weapon"//Object type weapon
 #define OBJTYPE_CLOTH		"cloth"//Object type cloth
 #define OBJTYPE_UNIT		"unit"//Object type unit
@@ -54,7 +55,7 @@ int DB_VARIABLEWARNING		= getErrorCode();//Non-lethal variable error in database
 
 //Movement settings
 #define MOTIONSTEP			4//Pixels of motion for each frame when units walk
-#define PROJSTEP			8//Pixels of motion for each frame of projectiles flying
+#define PROJSTEP			6//Pixels of motion for each frame of projectiles flying
 
 //Event flags
 #define EVENT_NORMAL		0b00000000//Normal event, triggered whenever control script is verified
@@ -70,6 +71,11 @@ int DB_VARIABLEWARNING		= getErrorCode();//Non-lethal variable error in database
 #define WEST				1//West
 #define SOUTH				2//South
 #define EAST				3//East
+
+//Clothing types
+#define CLOTH_HEAD			0//Head
+#define CLOTH_BODY			1//Body
+#define CLOTH_LEGS			2//Pants
 
 //Action codes
 //Second digit is effective code, first digit is for direction
@@ -89,6 +95,16 @@ int DB_VARIABLEWARNING		= getErrorCode();//Non-lethal variable error in database
 #define DAM_PHYSICAL		0//Phisical damage
 #define DAM_MAGICAL			1//Magical damage
 
+//Item types
+#define DISPOSABLE			0//Disposable item
+#define WEAPON				1//Weapon
+#define CLOTHING			2//Clothing
+
+//Game views
+#define GAME				0//Game view
+#define PLAYER				1//Player info view
+#define INVENTORY			2//Inventory view
+
 //Game calculations: damage, mana costs, ...
 #define MINDAMAGE							-1//Minimum damage that can be taken (if calculates lower damage, replaced with this value)
 #define CALC_DAMAGEDEALT(BASE, STAT)		((BASE) * (1 + STAT / 100))//Dealt damage calculation: [base weapon damage] * [strength/intelligence] / 10 - this means: strength = 1 => 10% damage bonus on weapons
@@ -105,13 +121,18 @@ int tilesSide = 32;//Side of each tile of the map
 deque<op> ops_bool;//Boolean script operators
 
 //Settings
+//[nothing yet]
 
 //User interface
 //Fonts
 TTF_Font* globalFont = NULL;//Global generic font
-TTF_Font* panelFont_major = NULL;//Panel major font
-TTF_Font* panelFont_minor = NULL;//Panel minor font
+TTF_Font* panelFont_major = NULL;//Panels major font
+TTF_Font* panelFont_minor = NULL;//Panels minor font
 TTF_Font* dialogFont = NULL;//Font for dialogs
+
+//Global graphics: buttons
+SDL_Surface* button_released = NULL;//Released button image
+SDL_Surface* button_pressed = NULL;//Pressed button image
 
 //User interface data - game HUD
 SDL_Surface* bar_frame = NULL;//Frame for hit and mana bars
@@ -123,6 +144,25 @@ SDL_Rect bar_hits_offset = {0, 0};//Hitbar offset
 SDL_Surface* bar_mana = NULL;//Manabar fill
 SDL_Rect bar_mana_offset = {0, 0};//Manabar offset
 
+//Dialogs
+SDL_Surface* dialog_pict = NULL;//Dialog box picture
+SDL_Surface* dialog_text = NULL;//Dialog text picture
+textBox dialogBox;//Dialog box
+
+//Windows: inventory
+SDL_Surface* bigPanel_pict = NULL;//Big panel picture
+panel inventoryPanel;//Inventory panel
+imageBox inv_slots [12];//Inventory slots boxes
+imageBox headBox, bodyBox, legsBox, weaponBox;//Equipped stuff boxes
+
+SDL_Surface* slot_pict = NULL;//Slot box picture
+SDL_Surface* slot_pict_focus = NULL;//Focused slot box picture
+
+int slot_selected = -1;
+
+button btn_use, btn_drop;//Use and drop inventory buttons
+
+//Windows: player info
 SDL_Surface* infoPanel_pict = NULL;//Info panel picture
 panel infoPanel;//Player info panel
 textBox nameBox;//Player name box
@@ -131,15 +171,13 @@ textBox strBox, intBox, conBox, wisBox;//Statistics boxes
 textBox effBox;//Effects box
 list<textBox*> resBox;//Resistance boxes
 
-SDL_Surface* dialog_pict = NULL;//Dialog box picture
-SDL_Surface* dialog_text = NULL;//Dialog text picture
-textBox dialogBox;//Dialog box
-
 //Colors
 Uint32 infoPanel_col1 = 0x000000;//Color for main stuff in info panel
 Uint32 infoPanel_col2 = 0x000000;//Secondary color in info panel
 Uint32 infoPanel_col3 = 0x000000;//Color for bonuses in info panel
 Uint32 infoPanel_col4 = 0x000000;//Color for maluses in info panel
+
+Uint32 buttons_col = 0x000000;//Color for buttons
 
 Uint32 dialog_col = 0xFFFFFF;//Color for dialog boxes
 
@@ -170,6 +208,26 @@ void panelPrint(SDL_Surface* target, control* p){
 	}
 }
 
+//Big panel printing function
+void bigPanelPrint(SDL_Surface* target, control* p){
+	SDL_Rect offset = {p->x, p->y};//Offset rectangle
+	SDL_BlitSurface(bigPanel_pict, NULL, target, &offset);//Prints panel picture
+	
+	panel* e = (panel*) p;//Converts to panel
+	list<control*>::iterator i;//Iterator for controls
+	for (i = e->controls.begin(); i != e->controls.end(); i++){//For each control
+		//Applies offset
+		(*i)->x += e->x;
+		(*i)->y += e->y;
+		
+		(*i)->print(target);//Prints the control
+		
+		//Removes offset
+		(*i)->x -= e->x;
+		(*i)->y -= e->y;
+	}
+}
+
 //Dialog printing function
 void dialogPrint(SDL_Surface* target, control* p){
 	textBox* e = (textBox*) p;//Converts to text boex
@@ -181,6 +239,50 @@ void dialogPrint(SDL_Surface* target, control* p){
 		offset.x = e->x + (e->w - dialog_text->w) / 2;
 		offset.y = e->y + (e->h - dialog_text->h) / 2;
 		SDL_BlitSurface(dialog_text, NULL, target, &offset);//Prints text
+	}
+}
+
+//Slot printing function
+void slotPrint(SDL_Surface* target, control* p){
+	imageBox* e = (imageBox*) p;//Converts to image box
+	
+	SDL_Rect offset = {e->x, e->y};//Offet rectangle
+	if (!e->isFocused()) SDL_BlitSurface(slot_pict, NULL, target, &offset);//Prints slot picture
+	else SDL_BlitSurface(slot_pict_focus, NULL, target, &offset);//Prints focused slot picture
+
+	if (e->i) e->i->print(target, e->x + e->w / 2, e->y + e->h / 2);//Prints slot image
+}
+
+//Function to handle slot selection
+void slot_getFocus(control* p){
+	slot_selected = atoi(p->id.c_str());
+}
+
+//Function to handle slot losing selection
+void slot_loseFocus(control* p){
+	control* sel = inventoryPanel.getFocused();
+
+	if (!sel || sel->type != IMAGEBOX) slot_selected = -1;
+}
+
+//Button printing function
+void buttonPrint(SDL_Surface* target, control* p){
+	button* e = (button*) p;//Converts to button
+	
+	SDL_Rect offset = {e->x, e->y};//Offset rectangle
+	
+	if (e->getStatus() == VISIBLE)//Normal status
+		SDL_BlitSurface(button_released, NULL, target, &offset);//Prints released button
+		
+	else if (e->getStatus() == PRESSED)//Button pressed
+		SDL_BlitSurface(button_pressed, NULL, target, &offset);//Prints pressed button
+	
+	//Prints text
+	if (e->text != "" && e->font){//If there are valid text and font
+		SDL_Surface* txt = TTF_RenderText_Blended(e->font, e->text.c_str(), e->getForeColor());//Renders text
+		SDL_Rect o {e->x + e->w / 2 - txt->w / 2, e->y + 5};//Offset rectangle
+		SDL_BlitSurface(txt, NULL, target, &o);//Blits text
+		SDL_FreeSurface(txt);//Frees text
 	}
 }
 
@@ -423,6 +525,38 @@ class damType: public content {
 
 list <damType> damTypeDb;//Types database
 
+//General item class
+class item: public content {
+	public:
+	animSet overlay;//Item animations
+	bool imgGiven;//Flag indicating if image was given
+	image icon;//Icon image
+	
+	int itemType;//Item type
+	
+	//Constructor
+	item(){
+		imgGiven = false;
+		itemType = DISPOSABLE;
+	}
+	
+	//Function to load from script object
+	void fromScriptObj(object o){
+		content::fromScriptObj(o);//Base content data
+		
+		object* overlay = o.getObj("overlay");//Weapon overlay object
+		object* icon = o.getObj("icon");//Icon object
+		
+		if (overlay){ this->overlay.fromScriptObj(*overlay); imgGiven = true;}//Loads overlay
+		if (icon) this->icon.fromScriptObj(*icon);//Gets icon
+	}
+	
+	//Printing function
+	void print(SDL_Surface* target, int x, int y){
+		if (imgGiven) overlay.print(target, x, y);//Prints if image was given
+	}
+};
+
 //Effect class
 class effect: public content {
 	public:
@@ -507,48 +641,65 @@ class effect: public content {
 	}
 };
 
-//Cloth class
-class cloth: public content{
+//Class disposable object
+class disposable: public item {
 	public:
-	animSet overlay;//Cloth animations
-	int layer;//Cloth layer (highest layer -> printed on top, layer = 0 -> printed below character)
+	effect use;//Effect when using
 	
+	//Constructor
+	disposable(){
+		imgGiven = false;
+		itemType = DISPOSABLE;
+	}
+	
+	//Function to load from script object
+	void fromScriptObj(object o){
+		if (o.type == OBJTYPE_ITEM){//if type is matching
+			item::fromScriptObj(o);//Loads base data
+			
+			object* use = o.getObj("use");//Use effect
+			
+			if (use) this->use.fromScriptObj(*use);//Gets use effect
+		}
+	}
+};
+
+list<disposable> itemDb;//Items database
+
+//Cloth class
+class cloth: public item{
+	public:	
 	effect onEquip;//On-equip effect
+	
+	int type;//Cloth type (head, body, pants)
 	
 	//Constructor
 	cloth(){
-		layer = 1;
-	}
-	
-	//Printing function
-	void print(SDL_Surface* target, int x, int y){
-		overlay.print(target, x, y);
+		type = CLOTH_HEAD;
+		imgGiven = false;
+		itemType = CLOTHING;
 	}
 	
 	//Function to load from script object
 	void fromScriptObj(object o){
 		if (o.type == OBJTYPE_CLOTH){//If type is matching
-			content::fromScriptObj(o);//Loads base content data
+			item::fromScriptObj(o);//Loads base content data
 			
-			object* overlay = o.getObj("overlay");//Gets overlay object
-			var* layer = o.getVar("layer");//Gets layer variable
+			var* type = o.getVar("type");//Gets type variable
 			
 			object* onEquip = o.getObj("onEquip");//On-equip effect
 			
-			if (overlay) this->overlay.fromScriptObj(*overlay);//Loads overlay
-			if (layer) this->layer = layer->intValue();//Gets layer
 			if (onEquip) this->onEquip.fromScriptObj(*onEquip);//Gets on-equip effect
+			if (type){//If there's a type variable
+				if (type->value == "head") this->type = CLOTH_HEAD;
+				else if (type->value == "body") this->type = CLOTH_BODY;
+				else if (type->value == "legs") this->type = CLOTH_LEGS;
+			}
 			
 			this->overlay.setAnim("idle_s");
 		}
 	}
 };
-
-//Function to sort cloths according to layer
-bool sortCloths_compare(cloth* a, cloth* b){
-	if (a->layer < b->layer) return true;
-	return false;
-}
 
 list <cloth> clothDb;//Cloths database
 
@@ -611,13 +762,11 @@ bool sortProj_compare(projectile* a, projectile* b){
 list<projectile> projectileDb;//Projectile database
 
 //Weapon class
-class weapon: public content{
+class weapon: public item{
 	public:
 	//Graphics
-	animSet overlay;//Weapon overlay (shown when striking)
 	string strikeAnim;//Player strike animation
 	int strikeFrame;//Frame of animation when unit strikes
-	bool image;//Flag indicating if image was given
 	
 	//Effects and stats
 	effect onEquip;//On-equip effect
@@ -628,34 +777,29 @@ class weapon: public content{
 		id = "";
 		author = "";
 		description = "";
-				
+
+		itemType = WEAPON;
+	
 		strikeAnim = "";
 		strikeFrame = 0;
-		image = false;
+		imgGiven = false;
 	}
 	
 	//Function to load from script object
 	void fromScriptObj(object o){
 		if (o.type == OBJTYPE_WEAPON){//If types are matching
-			content::fromScriptObj(o);//Loads base content data
+			item::fromScriptObj(o);//Loads base content data
 			
-			object* overlay = o.getObj("overlay");//Weapon overlay object
 			var* strikeAnim = o.getVar("strikeAnim");//Strike animation variable
 			var* strikeFrame = o.getVar("strikeFrame");//Strike frame variable
 			object* onEquip = o.getObj("onEquip");//On equip effect object
 			object* onTarget = o.getObj("onTarget");//On target effct object
 			
-			if (overlay){ this->overlay.fromScriptObj(*overlay); image = true;}//Loads overlay
 			if (strikeAnim) this->strikeAnim = strikeAnim->value;//Gets strike animation
 			if (strikeFrame) this->strikeFrame = strikeFrame->intValue();//Gets strike frame
 			if (onEquip) this->onEquip.fromScriptObj(*onEquip);//Loads on equip effect
 			if (onTarget) this->onTarget.fromScriptObj(*onTarget);//Loads on target effect
 		}
-	}
-	
-	//Function to print weapon
-	void print(SDL_Surface* target, int x, int y){
-		if (image) overlay.print(target,x,y);//Prints image if given
 	}
 	
 	//Function to get weapon effect on target with bonuses related to owner stats (mainly damage bonuses)
@@ -699,8 +843,15 @@ class unit: public content{
 	list<damType> resistances;//Per-type resistances
 	
 	//Fighting
-	weapon *primary;//Primary melee weapon
-	deque <cloth*> cloths;//Unit cloths
+	weapon *primary;//Primary weapon
+	
+	//Clothes
+	cloth* head;
+	cloth* body;
+	cloth* legs;
+	
+	//Items
+	item *inv [12];//Inventory items
 	
 	//Various
 	bool moved;//Flag indicating if unit has moved
@@ -735,16 +886,18 @@ class unit: public content{
 		
 		primary = NULL;
 		
+		head = NULL;
+		body = NULL;
+		legs = NULL;
+		
+		int i;
+		for (i = 0; i < 12; i++) inv[i] = NULL;
+		
 		moved = false;
 	}
 	
 	//Unit printing function
 	void print(SDL_Surface* target, int x, int y){
-		deque<cloth*>::iterator i;//Iterator
-		for (i = cloths.begin(); i != cloths.end(); i++)//For each cloth
-			if ((*i)->layer == 0) (*i)->print(target, x + dX, y + dY);//Prints cloth if on layer 0
-			else break;//Else exits loop
-		
 		//Prints hitbar
 		if (hits() > 0 && maxHits() > 0){
 			SDL_Rect hitBar = {x + anims.current()->current()->cShiftX - tilesSide / 2 + dX + 2, y + anims.current()->current()->cShiftY + anims.current()->current()->rect.h / 2 + dY, hits() * (tilesSide - 4) / maxHits(), 4};
@@ -752,9 +905,12 @@ class unit: public content{
 		}
 		
 		anims.print(target, x + dX, y + dY);//Prints using animSet printing function (prints current frame of current animation)
-		if (GETACT(action) == ACT_STRIKE && primary && primary->image) primary->overlay.print(target, x + dX, y + dY);//Prints weapon
+		if (GETACT(action) == ACT_STRIKE && primary) primary->print(target, x + dX, y + dY);//Prints weapon
 	
-		for (;i != cloths.end(); i++) (*i)->print(target, x + dX, y + dY);//Prints remaining cloths
+		//Prints clothes
+		if (head) head->print(target, x + dX, y + dY);
+		if (body) body->print(target, x + dX, y + dY);
+		if (legs) legs->print(target, x + dX, y + dY);
 		
 		//Prints effect icons
 		list<effect>::iterator e;//Effect iterator
@@ -803,7 +959,9 @@ class unit: public content{
 	void stop(){
 		action = GETACODE(ACT_IDLE, GETDIR(action));//Sets action code
 		anims.setAnim("idle_" + dirToString(GETDIR(action)));//Sets animation
-		setClothsAnim("idle_" + dirToString(GETDIR(action)));//Sets cloths animation
+		if (head) head->overlay.setAnim("idle_" + dirToString(GETDIR(action)));//Sets cloths animation
+		if (body) body->overlay.setAnim("idle_" + dirToString(GETDIR(action)));//Sets cloths animation
+		if (legs) legs->overlay.setAnim("idle_" + dirToString(GETDIR(action)));//Sets cloths animation
 	}
 	
 	//Walking function
@@ -813,7 +971,9 @@ class unit: public content{
 	void turn(int direction){
 		action = GETACODE(ACT_IDLE, direction);//Sets action code
 		anims.setAnim("idle_" + dirToString(direction));//Sets animation
-		setClothsAnim("idle_" + dirToString(direction));//Sets cloths animation
+		if (head) head->overlay.setAnim("idle_" + dirToString(direction));//Sets cloths animation
+		if (body) body->overlay.setAnim("idle_" + dirToString(direction));//Sets cloths animationi
+		if (legs) legs->overlay.setAnim("idle_" + dirToString(direction));//Sets cloths animation
 	}
 	
 	//Striking function
@@ -821,9 +981,11 @@ class unit: public content{
 		if (primary){//If weapon is valid
 			action = GETACODE(ACT_STRIKE, GETDIR(action));//Sets action code
 			anims.setAnim(primary->strikeAnim + "_" + dirToString(GETDIR(action)));//Sets striking animation
-			setClothsAnim(primary->strikeAnim + "_" + dirToString(GETDIR(action)));//Sets cloth animation
+			if (head) head->overlay.setAnim(primary->strikeAnim + "_" + dirToString(GETDIR(action)));//Sets cloths animation
+			if (body) body->overlay.setAnim(primary->strikeAnim + "_" + dirToString(GETDIR(action)));//Sets cloths animation
+			if (legs) legs->overlay.setAnim(primary->strikeAnim + "_" + dirToString(GETDIR(action)));//Sets cloths animation
 			
-			if (primary->image){
+			if (primary->imgGiven){
 				primary->overlay.setAnim("strike_" + dirToString(GETDIR(action)));//Sets weapon animation
 				primary->overlay.current()->curFrame = 0;//Restarts animation
 			}
@@ -845,7 +1007,9 @@ class unit: public content{
 	void kill(){
 		action = ACT_DYING;//Sets action code
 		anims.setAnim("dying");//Sets animation
-		setClothsAnim("dying");//Sets cloths animation
+		if (head) head->overlay.setAnim("dying");//Sets cloths animation
+		if (body) body->overlay.setAnim("dying");//Sets cloths animation
+		if (legs) legs->overlay.setAnim("dying");//Sets cloths animation
 	}
 	
 	//Function to go to next frame
@@ -893,26 +1057,53 @@ class unit: public content{
 		primary = w;//Sets primary weapon
 	}
 	
-	//Function to give cloth to unit
+	//Function to wear generic cloth
 	void wear(string id){
-		cloth *c = new cloth;//New cloth
+		cloth* c = new cloth;//New cloth
 		if (get(&clothDb, id)) *c = *get(&clothDb, id);//Gets cloth
 		
-		cloths.push_back(c);//Adds cloth
+		if (c){//If cloth exists
+			if (c->type == CLOTH_HEAD) head = c;
+			if (c->type == CLOTH_BODY) body = c;
+			if (c->type == CLOTH_LEGS) legs = c;
+		}
 	}
 	
-	//Function to set animation for all cloths
-	void setClothsAnim(string id){
-		deque<cloth*>::iterator i;//Iterator
-		for (i = cloths.begin(); i != cloths.end(); i++)//For each cloth
-			(*i)->overlay.setAnim(id);//Sets cloth anim
+	//Function to get the first free slot of inventory (or -1 if none)
+	int freeSlot(){
+		int i;
+		for (i = 0; i < 12; i++) if (inv[i] == NULL) return i;
+		return -1;
 	}
 	
-	//Function to move to next frame for all cloths
-	void nextFrameCloths(){
-		deque<cloth*>::iterator i;//Iterator
-		for (i = cloths.begin(); i != cloths.end(); i++)//For each cloth
-			(*i)->overlay.next();//Sets cloth anim
+	//Function to give an item (disposable, weapon, clothing) to the unit
+	void giveItem(string id){
+		item *a = (item*) get(&itemDb, id);//Gets item from item database
+		if (!a) a = (item*) get(&weaponDb, id);//Gets item from weapon database if not found
+		if (!a) a = (item*) get(&clothDb, id);//Gets item from clothing database if not found
+		
+		if (!a) return;//Exits function if nothing was found
+		
+		int slot = freeSlot();//Gets free slot
+		if (slot != -1){//If there's a free slot
+			if (a->itemType == DISPOSABLE){//If item is disposable
+				disposable* d = new disposable;
+				*d = *((disposable*) a);
+				inv[slot] = (item*) d;
+			}
+			
+			if (a->itemType == WEAPON){//If item is weapon
+				weapon* w = new weapon;
+				*w = *((weapon*) a);
+				inv[slot] = (item*) w;
+			}
+			
+			if (a->itemType == CLOTHING){//If item is clothing
+				cloth* c = new cloth;
+				*c = *((cloth*) a);
+				inv[slot] = (item*) c;
+			}
+		}
 	}
 	
 	//Function to make AI move (prototype)
@@ -927,8 +1118,10 @@ class unit: public content{
 	int maxHits(){
 		int result = baseMaxHits + (primary ? primary->onEquip.maxHits : 0);//Base max hits + primary weapon bonus
 		
-		int i;//Counter
-		for (i = 0; i < cloths.size(); i++) result += cloths[i]->onEquip.maxHits;//Adds effect of each cloth
+		//Gets clothing bonus
+		if (head) result += head->onEquip.maxHits;	
+		if (body) result += body->onEquip.maxHits;
+		if (legs) result += legs->onEquip.maxHits;
 		
 		list <effect>::iterator e;//Effect iterator
 		for (e = tempEffects.begin(); e != tempEffects.end(); e++) result += e->maxHits;//Adds each temporary effect
@@ -945,8 +1138,10 @@ class unit: public content{
 	int maxMana(){
 		int result = baseMaxMana + (primary ? primary->onEquip.maxHits : 0);//Base max mana + primary weapon bonus
 		
-		int i;//Counter
-		for (i = 0; i < cloths.size(); i++) result += cloths[i]->onEquip.maxMana;//Adds effect of each cloth
+		//Gets clothing bonus
+		if (head) result += head->onEquip.maxMana;	
+		if (body) result += body->onEquip.maxMana;
+		if (legs) result += legs->onEquip.maxMana;
 		
 		list <effect>::iterator e;//Effect iterator
 		for (e = tempEffects.begin(); e != tempEffects.end(); e++) result += e->maxMana;//Adds each temporary effect
@@ -958,8 +1153,10 @@ class unit: public content{
 	int strength(){
 		int result = baseStrength + (primary ? primary->onEquip.strength : 0);//Base strength + primary weapon bonus
 		
-		int i;//Counter
-		for (i = 0; i < cloths.size(); i++) result += cloths[i]->onEquip.strength;//Adds effect of each cloth
+		//Gets clothing bonus
+		if (head) result += head->onEquip.strength;	
+		if (body) result += body->onEquip.strength;
+		if (legs) result += legs->onEquip.strength;
 		
 		list <effect>::iterator e;//Effect iterator
 		for (e = tempEffects.begin(); e != tempEffects.end(); e++) result += e->strength;//Adds each temporary effect
@@ -971,8 +1168,10 @@ class unit: public content{
 	int intelligence(){
 		int result = baseIntelligence + (primary ? primary->onEquip.intelligence : 0);//Base intelligence + primary weapon bonus
 		
-		int i;//Counter
-		for (i = 0; i < cloths.size(); i++) result += cloths[i]->onEquip.intelligence;//Adds effect of each cloth
+		//Gets clothing bonus
+		if (head) result += head->onEquip.intelligence;	
+		if (body) result += body->onEquip.intelligence;
+		if (legs) result += legs->onEquip.intelligence;
 		
 		list <effect>::iterator e;//Effect iterator
 		for (e = tempEffects.begin(); e != tempEffects.end(); e++) result += e->intelligence;//Adds each temporary effect
@@ -984,8 +1183,10 @@ class unit: public content{
 	int constitution(){
 		int result = baseConstitution + (primary ? primary->onEquip.constitution : 0);//Base constitution + primary weapon bonus
 		
-		int i;//Counter
-		for (i = 0; i < cloths.size(); i++) result += cloths[i]->onEquip.constitution;//Adds effect of each cloth
+		//Gets clothing bonus
+		if (head) result += head->onEquip.constitution;
+		if (body) result += body->onEquip.constitution;
+		if (legs) result += legs->onEquip.constitution;
 		
 		list <effect>::iterator e;//Effect iterator
 		for (e = tempEffects.begin(); e != tempEffects.end(); e++) result += e->constitution;//Adds each temporary effect
@@ -997,8 +1198,10 @@ class unit: public content{
 	int wisdom(){
 		int result = baseWisdom + (primary ? primary->onEquip.wisdom : 0);//Base wisdom + primary weapon bonus
 		
-		int i;//Counter
-		for (i = 0; i < cloths.size(); i++) result += cloths[i]->onEquip.wisdom;//Adds effect of each cloth
+		//Gets clothing bonus
+		if (head) result += head->onEquip.wisdom;
+		if (body) result += body->onEquip.wisdom;
+		if (legs) result += legs->onEquip.wisdom;
 		
 		list <effect>::iterator e;//Effect iterator
 		for (e = tempEffects.begin(); e != tempEffects.end(); e++) result += e->wisdom;//Adds each temporary effect
@@ -1024,9 +1227,18 @@ class unit: public content{
 			if (res) result += res->mult;//Adds effect to result
 		}
 		
-		deque<cloth*>::iterator c;//Cloth iterator
-		for (c = cloths.begin(); c != cloths.end(); c++){//For each cloth
-			damType* res = get(&(*c)->onEquip.resistances, tId);//Cloth resistance bonus
+		if (head){//If there's a head clothing
+			damType* res = get(&head->onEquip.resistances, tId);//Head resistance bonus
+			if (res) result += res->mult;//Adds effect to result
+		}
+		
+		if (body){//If there's a body clothing
+			damType* res = get(&body->onEquip.resistances, tId);//Body resistance bonus
+			if (res) result += res->mult;//Adds effect to result
+		}
+		
+		if (legs){//If there's a legs clothing
+			damType* res = get(&legs->onEquip.resistances, tId);//Legs resistance bonus
 			if (res) result += res->mult;//Adds effect to result
 		}
 		
@@ -1887,12 +2099,16 @@ class campaign: public content{
 
 	deque<string> dialogSeq;//Current dialog sequence
 	
+	int view;//Current view
+	
 	//Constructor
 	campaign(){
 		m = NULL;
 		curSequence = 0;
 		turn = 0;
 		turnCount = 1;
+		
+		view = GAME;
 	}
 	
 	//Function to load from script object
@@ -1917,8 +2133,6 @@ class campaign: public content{
 	
 	//Printing function
 	void print(SDL_Surface* target, int x, int y){
-		updateInfoPanel();//Updates info panel
-		
 		if (m){//If map is valid
 			if (player.units.size() > 0)//If there's at least one controlled unit
 				m->print(target, x, y, player.units[0]);//Prints map centered on first controlled unit
@@ -1960,11 +2174,21 @@ class campaign: public content{
 			SDL_BlitSurface(bar_frame, NULL, target, &o);//Blits frame
 		}
 		
-		infoPanel.print(target);
-		
 		//Dialogs
 		if (dialogSeq.size() > 0){//If needs to show dialog
 			dialogBox.print(target);
+		}
+		
+		//Player info view
+		if (view == PLAYER){
+			updateInfoPanel();//Updates info panel
+			infoPanel.print(target);//Prints info panel
+		}
+		
+		//Inventory
+		if (view == INVENTORY){
+			updateInventoryPanel();//Updates inventory panel
+			inventoryPanel.print(target);//Prints inventory panel
 		}
 	}
 	
@@ -1985,7 +2209,7 @@ class campaign: public content{
 	
 	//Turn moves function
 	void turnMoves(){
-		if (dialogSeq.size() > 0) return;//Does nothing if there's dialog text
+		if (dialogSeq.size() > 0 || view != GAME) return;//Does nothing if there's dialog text or is not in game
 		
 		if (turn == 0 && player.ready()){//If player turn
 			if (!player.moved()) player.getInput();//Gets player input
@@ -2081,6 +2305,49 @@ class campaign: public content{
 		}
 	}
 	
+	//Function to update inventory panel
+	void updateInventoryPanel(){
+		if (player.units.size() > 0){//If there's a valid unit
+			//Prints equipped items boxes
+			if (player.units[0]->head) headBox.i = &player.units[0]->head->icon;
+			else headBox.i = NULL;
+			
+			if (player.units[0]->body) bodyBox.i = &player.units[0]->body->icon;
+			else bodyBox.i = NULL;
+			
+			if (player.units[0]->legs) legsBox.i = &player.units[0]->legs->icon;
+			else legsBox.i = NULL;
+			
+			if (player.units[0]->primary) weaponBox.i = &player.units[0]->primary->icon;
+			else weaponBox.i = NULL;
+			
+			//Prints inventory boxes
+			int i;
+			for (i = 0; i < 12; i++){
+				if (player.units[0]->inv[i]) inv_slots[i].i = &player.units[0]->inv[i]->icon;
+				else inv_slots[i].i = NULL;
+			}
+			
+			//Sets use button text
+			if (slot_selected != -1 && slot_selected < 11){
+				item* i = player.units[0]->inv[slot_selected];//Selected item
+				if (i && i->itemType == DISPOSABLE) btn_use.text = "use";
+				else if (i) btn_use.text = "equip";
+			}
+			
+			else if (slot_selected != -1 && slot_selected < 16)
+				btn_use.text = "unequip";
+			
+			else btn_use.text = "use";
+		}
+	}
+	
+	//Function to check events
+	void events(SDL_Event e){
+		if (view == PLAYER) infoPanel.checkEvents(e);
+		else if (view == INVENTORY) inventoryPanel.checkEvents(e);
+	}
+	
 	//Function to get a deque of campaign variables
 	deque<var> getVars(){
 		deque<var> result;//Result
@@ -2099,9 +2366,77 @@ class campaign: public content{
 		
 		return result;//Returns result
 	}
-};
+} current;
 
 list<campaign> campaignDb;//Campaign database
+
+//Function to handle use button click
+void btn_use_click(control* p, mouseEvent ev){
+	if (slot_selected == -1) return;//Exits if there's no slot selected
+		
+	item* i = current.player.units[0]->inv[slot_selected];//Item to use
+	
+	if (slot_selected < 12){//If inventory slot was selected
+		if (i->itemType == DISPOSABLE){//If item can be used
+			disposable *d = (disposable*) i;
+			current.player.units[0]->applyEffect(d->use);//Applies effect on player
+			current.player.units[0]->inv[slot_selected] = NULL;//Frees inventory slot
+		}
+		
+		else if (i->itemType == WEAPON && !current.player.units[0]->primary){//if item is a weapon and player has no weapon
+			current.player.units[0]->primary = (weapon*) i;//Equips weapon
+			current.player.units[0]->inv[slot_selected] = NULL;//Removes from inventory
+		}
+		
+		else if (i->itemType == CLOTHING){//If item is clothing
+			cloth* c = (cloth*) i;//Converts to cloth
+			
+			if (c->type == CLOTH_HEAD && !current.player.units[0]->head){//If it's head clothing and player head is free
+				current.player.units[0]->head = c;//Sets head
+				current.player.units[0]->inv[slot_selected] = NULL;//Removes from inventory
+			}
+			
+			if (c->type == CLOTH_BODY && !current.player.units[0]->body){//If it's body clothing and player body is free
+				current.player.units[0]->body = c;//Sets body
+				current.player.units[0]->inv[slot_selected] = NULL;//Removes from inventory
+			}
+			
+			if (c->type == CLOTH_LEGS && !current.player.units[0]->legs){//If it's legs clothing and player legs are free
+				current.player.units[0]->legs = c;//Sets legs
+				current.player.units[0]->inv[slot_selected] = NULL;//Removes from inventory
+			}
+		}
+	}
+	
+	else if (current.player.units[0]->freeSlot() != -1){//If equipped slot was selected
+		int slot = current.player.units[0]->freeSlot();//First inventory free slot
+		
+		if (slot_selected == 12){//If selected head slot
+			current.player.units[0]->inv[slot] = (cloth*) current.player.units[0]->head;
+			current.player.units[0]->head = NULL;
+		}
+		
+		if (slot_selected == 13){//If selected body slot
+			current.player.units[0]->inv[slot] = (cloth*) current.player.units[0]->body;
+			current.player.units[0]->body = NULL;
+		}
+		
+		if (slot_selected == 14){//If selected legs slot
+			current.player.units[0]->inv[slot] = (cloth*) current.player.units[0]->legs;
+			current.player.units[0]->legs = NULL;
+		}
+		
+		if (slot_selected == 15){//If selected weapon slot
+			current.player.units[0]->inv[slot] = (weapon*) current.player.units[0]->primary;
+			current.player.units[0]->primary = NULL;
+		}
+	}
+}
+
+//Function to handle drop button click
+void btn_drop_click(control* p, mouseEvent ev){
+	
+}
 
 //Projectile next frame function
 void projectile::nextFrame(){
@@ -2277,13 +2612,19 @@ void unit::walk(int direction, bool turnOnly){
 	moved = true;
 	action = GETACODE(ACT_WALK, direction);//Sets action codes
 	anims.setAnim("walk_" + dirToString(direction));//Sets walking animation
-	setClothsAnim("walk_" + dirToString(direction));//Sets walking animation for cloths
+	if (head) head->overlay.setAnim("walk_" + dirToString(direction));//Sets cloths animation
+	if (body) body->overlay.setAnim("walk_" + dirToString(direction));//Sets cloths animation
+	if (legs) legs->overlay.setAnim("walk_" + dirToString(direction));//Sets cloths animation
 }
 
 //Function to go to next frame
 void unit::nextFrame(){
 	anims.next();//Next animation frame
-	nextFrameCloths();//Next cloths frame
+	
+	//Next frame for clothes
+	if (head) head->overlay.next();
+	if (body) body->overlay.next();
+	if (legs) legs->overlay.next();
 	
 	if (GETACT(action) == ACT_WALK){//If unit is walking
 		//Moves unit
@@ -2335,7 +2676,7 @@ void unit::nextFrame(){
 	}
 	
 	else if (GETACT(action) == ACT_STRIKE && primary){//If unit is striking
-		if (primary->image) primary->overlay.next();//Next frame for weapon animation
+		if (primary->imgGiven) primary->overlay.next();//Next frame for weapon animation
 		
 		if (anims.current()->curFrame == anims.current()->duration() - 1) stop();//Stops if reached end of animation
 		
@@ -2476,6 +2817,12 @@ void loadDatabase(object o){
 			newProj.fromScriptObj(*i);//Loads projectile
 			projectileDb.push_back(newProj);//Adds projectile
 		}
+		
+		if (i->type == OBJTYPE_ITEM){//If object is an item
+			disposable newItem;//New item
+			newItem.fromScriptObj(*i);//Loads item
+			itemDb.push_back(newItem);//Adds item to database
+		}
 	}
 	
 	cout << "Loaded successfully!" << endl;
@@ -2491,17 +2838,19 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 		
 	initWindow(1000, 600, "Tales of Gydia");//Window setup
 	
-	//Loads game database
+	/*Loads game database*/{
 	fileData f (dbFile);//File data for database
 	loadDatabase(f.objGen("db"));//Loads database
+	}
 	
-	//Loads game settings
+	/*Loads game settings*/{
 	fileData s (settingsFile);//Settings file
 	object settings = s.objGen("settings");//Loads settings
 	
 	//[no settings yet!]
+	}
 	
-	//Loads game interface data
+	/*Loads game interface data*/{
 	fileData t (themeFile);//Theme file
 	object theme = t.objGen("theme");//Loads theme
 	
@@ -2530,16 +2879,27 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 	if (theme.getVar("infoPanel_col3")) infoPanel_col3 = strtol(theme.getVar("infoPanel_col3")->value.c_str(), NULL, 0);//Loads panel third color (bonuses)
 	if (theme.getVar("infoPanel_col4")) infoPanel_col4 = strtol(theme.getVar("infoPanel_col4")->value.c_str(), NULL, 0);//Loads panel third color (maluses)
 	
-	if (theme.getVar("dialogBox_img")) dialog_pict = CACHEDIMG(theme.getVar("dialogBox_img")->value);//Loads dialog picture
+	if (theme.getVar("dialogBox_img")) dialog_pict = CACHEDIMG(theme.getVar("dialogBox_img")->value);//Loads dialog box picture
 	if (theme.getVar("dialogBox_col")) dialog_col = strtol(theme.getVar("dialogBox_col")->value.c_str(), NULL, 0);//Loads dialog color
 	
+	if (theme.getVar("bigPanel_img")) bigPanel_pict = CACHEDIMG(theme.getVar("bigPanel_img")->value);//Loads big panel picture
+	if (theme.getVar("slot_img")) slot_pict = CACHEDIMG(theme.getVar("slot_img")->value);//Loads weapon box picture
+	if (theme.getVar("slot_focus_img")) slot_pict_focus = CACHEDIMG(theme.getVar("slot_focus_img")->value);//Loads weapon focused box picture
+	
+	if (theme.getVar("button_released")) button_released = CACHEDIMG(theme.getVar("button_released")->value);//Loads released button picture
+	if (theme.getVar("button_pressed")) button_pressed = CACHEDIMG(theme.getVar("button_pressed")->value);//Loads pressed button picture
+	if (theme.getVar("button_col")) buttons_col = strtol(theme.getVar("button_col")->value.c_str(), NULL, 0);//Loads panel color
+	}
+	
+	/*Player info panel*/{
 	//Sets up info panel
-	infoPanel.x = bar_frame_offset.x;
-	infoPanel.y = bar_frame_offset.y + bar_frame->h;
-	infoPanel.w = (infoPanel_pict ? infoPanel_pict->w : 200);
-	infoPanel.h = (infoPanel_pict ? infoPanel_pict->h : 200);
-	infoPanel.printMethod = panelPrint;
-	infoPanel.setAlpha(255);
+	infoPanel.w = bigPanel_pict->w;
+	infoPanel.h = bigPanel_pict->h;
+	infoPanel.x = (window->w - infoPanel.w) / 2;
+	infoPanel.y = (window->h - infoPanel.h) / 2;
+	infoPanel.printMethod = bigPanelPrint;
+	infoPanel.lockPosition = false;
+	infoPanel.setClickArea();
 	
 	//Name text box
 	nameBox.x = 5;
@@ -2607,13 +2967,85 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 		
 		n++;
 	}
+	}
 	
-	//Dialog box
+	/*Dialog box*/{
 	dialogBox.x = window->w / 2 - dialog_pict->w / 2;
 	dialogBox.y = window->h - dialog_pict->h;
 	dialogBox.w = dialog_pict->w;
 	dialogBox.h = dialog_pict->h;
 	dialogBox.printMethod = dialogPrint;
+	}
+	
+	/*Inventory screen*/{
+		inventoryPanel.w = bigPanel_pict->w;
+		inventoryPanel.h = bigPanel_pict->h;
+		inventoryPanel.x = (window->w - inventoryPanel.w) / 2;
+		inventoryPanel.y = (window->h - inventoryPanel.h) / 2;
+		inventoryPanel.printMethod = bigPanelPrint;
+		inventoryPanel.setClickArea();
+		
+		btn_use.x = 10 + 4 * slot_pict->w + (bigPanel_pict->w - 10 - 4 * slot_pict->w - button_released->w) / 2;
+		btn_use.y = 10 + 3 * slot_pict->h + 15;
+		btn_use.w = button_released->w;
+		btn_use.h = button_released->h;
+		btn_use.setClickArea();
+		btn_use.font = panelFont_minor;
+		btn_use.foreColor = buttons_col;
+		btn_use.text = "use";
+		btn_use.printMethod = buttonPrint;
+		inventoryPanel.controls.push_back(&btn_use);
+		
+		btn_drop = btn_use;
+		btn_drop.y += btn_drop.h;
+		btn_drop.text = "drop";
+		inventoryPanel.controls.push_back(&btn_drop);
+		
+		btn_use.addHandler_click(btn_use_click);
+		btn_drop.addHandler_click(btn_drop_click);
+		
+		int i;
+		for (i = 0; i < 12; i++){
+			inv_slots[i].x = (i % 4) * slot_pict->w + 10;
+			inv_slots[i].y = floor(i / 4) * slot_pict->h + 10;
+			inv_slots[i].w = slot_pict->w;
+			inv_slots[i].h = slot_pict->h;
+			inv_slots[i].printMethod = slotPrint;
+			inv_slots[i].id = toString(i);
+			inv_slots[i].addHandler_getFocus(slot_getFocus);
+			inv_slots[i].addHandler_loseFocus(slot_loseFocus);
+			inventoryPanel.controls.push_back(&inv_slots[i]);
+		}
+		
+		headBox.x = 10 + 4 * slot_pict->w + (bigPanel_pict->w - 10 - 4 * slot_pict->w) / 2 - slot_pict->w;
+		headBox.y = 10;
+		headBox.w = slot_pict->w;
+		headBox.h = slot_pict->h;
+		headBox.id = "12";
+		headBox.printMethod = slotPrint;
+		headBox.addHandler_getFocus(slot_getFocus);
+		headBox.addHandler_loseFocus(slot_loseFocus);
+		inventoryPanel.controls.push_back(&headBox);
+		
+		bodyBox = headBox;
+		bodyBox.y += slot_pict->h;
+		bodyBox.id = "13";
+		bodyBox.addHandler_getFocus(slot_getFocus);
+		bodyBox.addHandler_loseFocus(slot_loseFocus);
+		inventoryPanel.controls.push_back(&bodyBox);
+		
+		legsBox = bodyBox;
+		legsBox.y += slot_pict->h;
+		legsBox.id = "14";
+		legsBox.addHandler_getFocus(slot_getFocus);
+		legsBox.addHandler_loseFocus(slot_loseFocus);
+		inventoryPanel.controls.push_back(&legsBox);
+		
+		weaponBox = bodyBox;
+		weaponBox.x += slot_pict->h;
+		weaponBox.id = "15";
+		inventoryPanel.controls.push_back(&weaponBox);
+	}
 	
 	//Sets operators
 	op bool_equal ("=", 1, ops_bool_equal);
