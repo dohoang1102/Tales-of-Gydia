@@ -3,8 +3,8 @@
 #ifndef _IMAGE
 #define _IMAGE
 
-#include <SDL\SDL.h>
-#include <SDL\SDL_image.h>
+#include <SDL/SDL.h>
+#include <SDL/SDL_image.h>
 
 class image;//Image class prototype
 

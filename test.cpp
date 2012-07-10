@@ -18,10 +18,6 @@ int main(int argc, char* argv[]){
 
 	int curFps = 1;
 	
-	current.player.units[0]->giveItem("apple");
-	current.player.units[0]->giveItem("staff");
-	current.player.units[0]->giveItem("legs_pants_greenish");
-	
 	while (running){
 		lfb = SDL_GetTicks();
 		

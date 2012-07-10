@@ -1,7 +1,7 @@
 //Game handling header
 
-#ifndef _MAP
-#define _MAP
+#ifndef _GAME
+#define _GAME
 
 #include "error.h"
 #include "cache.h"
@@ -118,7 +118,9 @@ class campaign;//Campaign class prototype
 typedef struct {int code; string args;} order;//Order structure
 
 int tilesSide = 32;//Side of each tile of the map
+
 deque<op> ops_bool;//Boolean script operators
+deque<op> ops_int;//Intger script operators
 
 //Settings
 //[nothing yet]
@@ -133,6 +135,8 @@ TTF_Font* dialogFont = NULL;//Font for dialogs
 //Global graphics: buttons
 SDL_Surface* button_released = NULL;//Released button image
 SDL_Surface* button_pressed = NULL;//Pressed button image
+SDL_Surface* button_quit_released = NULL;//Released quit button image
+SDL_Surface* button_quit_pressed = NULL;//Pressed quit button image
 
 //User interface data - game HUD
 SDL_Surface* bar_frame = NULL;//Frame for hit and mana bars
@@ -148,6 +152,9 @@ SDL_Rect bar_mana_offset = {0, 0};//Manabar offset
 SDL_Surface* dialog_pict = NULL;//Dialog box picture
 SDL_Surface* dialog_text = NULL;//Dialog text picture
 textBox dialogBox;//Dialog box
+
+//Windows: global
+button btn_quit;//Quit button
 
 //Windows: inventory
 SDL_Surface* bigPanel_pict = NULL;//Big panel picture
@@ -187,6 +194,12 @@ string ops_bool_greater(string a, string b){ return toString(atoi(a.c_str()) > a
 string ops_bool_less(string a, string b){ return toString(atoi(a.c_str()) < atoi(b.c_str())); }
 string ops_bool_and(string a, string b){ return toString(atoi(a.c_str()) && atoi(b.c_str())); }
 string ops_bool_or(string a, string b){ return toString(atoi(a.c_str()) || atoi(b.c_str())); }
+
+//Integer operators functions
+string ops_int_sum(string a, string b){ return toString(atoi(a.c_str()) + atoi(b.c_str())); }
+string ops_int_subt(string a, string b){ return toString(atoi(a.c_str()) - atoi(b.c_str())); }
+string ops_int_mult(string a, string b){ return toString(atoi(a.c_str()) * atoi(b.c_str())); }
+string ops_int_div(string a, string b){ return toString(atoi(a.c_str()) / atoi(b.c_str())); }
 
 //Panel printing function
 void panelPrint(SDL_Surface* target, control* p){
@@ -251,6 +264,14 @@ void slotPrint(SDL_Surface* target, control* p){
 	else SDL_BlitSurface(slot_pict_focus, NULL, target, &offset);//Prints focused slot picture
 
 	if (e->i) e->i->print(target, e->x + e->w / 2, e->y + e->h / 2);//Prints slot image
+}
+
+//Quit button printing function
+void quitPrint(SDL_Surface* target, control* p){
+	SDL_Rect offset = {p->x, p->y};//Offset rectangle
+	
+	if (p->getStatus() == VISIBLE) SDL_BlitSurface(button_quit_released, NULL, target, &offset);//Prints normal picture
+	if (p->getStatus() == PRESSED) SDL_BlitSurface(button_quit_pressed, NULL, target, &offset);//Prints pressed picture
 }
 
 //Function to handle slot selection
@@ -380,11 +401,13 @@ class deco: public content{
 	public:
 	image i;//Decoration image
 	bool free;//Free flag: can walk on deco
+	bool free_air;//Air free flag
 	int x, y;//Coords of deco
 	
 	//Constructor
 	deco(){
 		free = true;
+		free_air = true;
 		x = 0;
 		y = 0;
 	}
@@ -395,9 +418,11 @@ class deco: public content{
 			content::fromScriptObj(o);//Loads content base data
 			
 			var* free = o.getVar("free");//Free flag
+			var* free_air = o.getVar("free_air");//Air free flag
 			object* i = o.getObj("image");//Image flag
 			
 			if (free) this->free = free->intValue();//Gets free flag
+			if (free_air) this->free_air = free_air->intValue();//Gets air free flag
 			if (i) this->i.fromScriptObj(*i);//Gets image
 		}
 	}
@@ -422,6 +447,7 @@ class terrain: public content{
 	image baseImage;//Base image of the terrain
 	int layer;//Layer of the terrain (transitions are printed only above lower layers)
 	bool free;//Flag indicating if player can walk on terrain
+	bool free_air;//Flag indicating if things can fly over terrain
 	Uint32 mmapColor;//Color in minimap
 		
 	//Constructor
@@ -431,6 +457,7 @@ class terrain: public content{
 		description = "";
 		layer = 0;
 		free = true;
+		free_air = true;
 		mmapColor = 0;
 	}
 	
@@ -474,9 +501,11 @@ class terrain: public content{
 				}
 				
 				var* free = o.getVar("free");//Free variable
+				var* free_air = o.getVar("free_air");//Air free variable
 				var* mmapColor = o.getVar("mmapColor");//Minimap color variable
 				
 				if (free) this->free = free->intValue();//Gets free flag
+				if (free_air) this->free_air = free_air->intValue();//Gets air free flag
 				if (mmapColor) this->mmapColor = strtol(mmapColor->value.c_str(), NULL, 0);//Gets minimap color
 			}
 			
@@ -714,6 +743,8 @@ class projectile: public content{
 	int dX, dY;//Position variation (for moving animation)
 	int direction;//Projectile direction
 	
+	bool flying;//Flag indicating if projectile is flying
+	
 	int dist;//Distance made by projectile
 	
 	map *parent;//Projectile parent map
@@ -726,6 +757,7 @@ class projectile: public content{
 		dX = 0;
 		dY = 0;
 		direction = NORTH;
+		flying = true;
 		dist = 0;
 		parent = NULL;
 	}
@@ -738,10 +770,12 @@ class projectile: public content{
 			object* anims = o.getObj("anims");//Animations object
 			object* onTarget = o.getObj("onTarget");//Effect object
 			var* range = o.getVar("range");//Range variable
+			var* flying = o.getVar("flying");//Flying variable
 			
 			if (anims) this->anims.fromScriptObj(*anims);//Loads anims
 			if (onTarget) this->onTarget.fromScriptObj(*onTarget);//Loads effect on target
 			if (range) this->range = range->intValue();//Gets range
+			if (flying) this->flying = flying->intValue();//Gets flying flag
 		}
 	}
 	
@@ -855,6 +889,7 @@ class unit: public content{
 	
 	//Various
 	bool moved;//Flag indicating if unit has moved
+	bool flying;//Flag indicating if unit can fly
 	
 	//Constructor
 	unit(){
@@ -894,6 +929,7 @@ class unit: public content{
 		for (i = 0; i < 12; i++) inv[i] = NULL;
 		
 		moved = false;
+		flying = false;
 	}
 	
 	//Unit printing function
@@ -936,10 +972,12 @@ class unit: public content{
 			var* constitution = o.getVar("constitution");//Constitution variable
 			var* wisdom = o.getVar("wisdom");//Wisdom variable
 			var* sight = o.getVar("sight");//Sight variable
+			var* flying = o.getVar("flying");//Flying variable
 			
 			if (anims) this->anims.fromScriptObj(*anims);//Loads animations
 			if (hits) this->baseMaxHits = hits->intValue();//Gets max hits
 			if (sight) this->sight = sight->intValue();//Gets sight
+			if (flying) this->flying = flying->intValue();//Gets flying
 			
 			this->anims.setAnim("idle_s");//Turns south
 			this->baseHits = this->baseMaxHits;//Sets hits
@@ -1640,7 +1678,7 @@ class map: public content{
 	unit* createUnit(string id, string name, int x, int y, int side){
 		unit* u = get(&unitDb, id);//Required unit
 		
-		if (u && isFree(x, y)){//If unit exists and tile is free
+		if (u && isFree(x, y, u->flying)){//If unit exists and tile is free
 			unit* newUnit = new unit;//Unit to add
 			*newUnit = *u;//Copies unit
 			
@@ -1842,30 +1880,55 @@ class map: public content{
 	}
 	
 	//Function returning if tile is free
-	bool isFree(int x, int y){
+	bool isFree(int x, int y, bool flying = false){
 		if (getTile(x, y)){//If terrain exists
 			terrain* tile = getTile(x, y);//Gets terrain
 			
-			//Checks if terrain is not free or there's a transition from a non-free terrain
-			if (!tile->free) return false;
-			if (getTile(x, y - 1) && !getTile(x, y - 1)->free && getTile(x, y - 1)->layer > tile->layer) return false;
-			if (getTile(x + 1, y - 1) && !getTile(x + 1, y - 1)->free && getTile(x + 1, y - 1)->layer > tile->layer) return false;
-			if (getTile(x + 1, y) && !getTile(x + 1, y)->free && getTile(x + 1, y)->layer > tile->layer) return false;
-			if (getTile(x + 1, y + 1) && !getTile(x + 1, y + 1)->free && getTile(x + 1, y + 1)->layer > tile->layer) return false;
-			if (getTile(x, y + 1) && !getTile(x, y + 1)->free && getTile(x, y + 1)->layer > tile->layer) return false;
-			if (getTile(x - 1, y + 1) && !getTile(x - 1, y + 1)->free && getTile(x - 1, y + 1)->layer > tile->layer) return false;
-			if (getTile(x - 1, y) && !getTile(x - 1, y)->free && getTile(x - 1, y)->layer > tile->layer) return false;
-			if (getTile(x - 1, y - 1) && !getTile(x - 1, y - 1)->free && getTile(x - 1, y - 1)->layer > tile->layer) return false;
+			if (!flying){
+				//Checks if terrain is not free or there's a transition from a non-free terrain
+				if (!tile->free) return false;
+				if (getTile(x, y - 1) && !getTile(x, y - 1)->free && getTile(x, y - 1)->layer > tile->layer) return false;
+				if (getTile(x + 1, y - 1) && !getTile(x + 1, y - 1)->free && getTile(x + 1, y - 1)->layer > tile->layer) return false;
+				if (getTile(x + 1, y) && !getTile(x + 1, y)->free && getTile(x + 1, y)->layer > tile->layer) return false;
+				if (getTile(x + 1, y + 1) && !getTile(x + 1, y + 1)->free && getTile(x + 1, y + 1)->layer > tile->layer) return false;
+				if (getTile(x, y + 1) && !getTile(x, y + 1)->free && getTile(x, y + 1)->layer > tile->layer) return false;
+				if (getTile(x - 1, y + 1) && !getTile(x - 1, y + 1)->free && getTile(x - 1, y + 1)->layer > tile->layer) return false;
+				if (getTile(x - 1, y) && !getTile(x - 1, y)->free && getTile(x - 1, y)->layer > tile->layer) return false;
+				if (getTile(x - 1, y - 1) && !getTile(x - 1, y - 1)->free && getTile(x - 1, y - 1)->layer > tile->layer) return false;
+				
+				deque<unit*>::iterator u;//Unit iterator
+				for (u = units.begin(); u != units.end(); u++)//For each unit
+					if ((*u)->x == x && (*u)->y == y) return false;//If unit is in tile returns false
+					
+				deque<deco*>::iterator d;//Deco iterator
+				for (d = decos.begin(); d != decos.end(); d++)//For each deco
+					if ((*d)->x == x && (*d)->y == y && !(*d)->free) return false;//If deco is in tile returns false
+					
+				return true;//Returns true if no unit was found
+			}
 			
-			deque<unit*>::iterator u;//Unit iterator
-			for (u = units.begin(); u != units.end(); u++)//For each unit
-				if ((*u)->x == x && (*u)->y == y) return false;//If unit is in tile returns false
+			else {
+				//Checks if terrain is not free or there's a transition from a non-free terrain
+				if (!tile->free_air) return false;
+				if (getTile(x, y - 1) && !getTile(x, y - 1)->free_air && getTile(x, y - 1)->layer > tile->layer) return false;
+				if (getTile(x + 1, y - 1) && !getTile(x + 1, y - 1)->free_air && getTile(x + 1, y - 1)->layer > tile->layer) return false;
+				if (getTile(x + 1, y) && !getTile(x + 1, y)->free_air && getTile(x + 1, y)->layer > tile->layer) return false;
+				if (getTile(x + 1, y + 1) && !getTile(x + 1, y + 1)->free_air && getTile(x + 1, y + 1)->layer > tile->layer) return false;
+				if (getTile(x, y + 1) && !getTile(x, y + 1)->free_air && getTile(x, y + 1)->layer > tile->layer) return false;
+				if (getTile(x - 1, y + 1) && !getTile(x - 1, y + 1)->free_air && getTile(x - 1, y + 1)->layer > tile->layer) return false;
+				if (getTile(x - 1, y) && !getTile(x - 1, y)->free_air && getTile(x - 1, y)->layer > tile->layer) return false;
+				if (getTile(x - 1, y - 1) && !getTile(x - 1, y - 1)->free_air && getTile(x - 1, y - 1)->layer > tile->layer) return false;
 				
-			deque<deco*>::iterator d;//Deco iterator
-			for (d = decos.begin(); d != decos.end(); d++)//For each deco
-				if ((*d)->x == x && (*d)->y == y) return false;//If deco is in tile returns false
-				
-			return true;//Returns true if no unit was found
+				deque<unit*>::iterator u;//Unit iterator
+				for (u = units.begin(); u != units.end(); u++)//For each unit
+					if ((*u)->x == x && (*u)->y == y) return false;//If unit is in tile returns false
+					
+				deque<deco*>::iterator d;//Deco iterator
+				for (d = decos.begin(); d != decos.end(); d++)//For each deco
+					if ((*d)->x == x && (*d)->y == y && !(*d)->free_air) return false;//If deco is in tile returns false
+					
+				return true;//Returns true if no unit was found
+			}
 		}
 		
 		return false;//Returns false if tile is not in map
@@ -2435,7 +2498,13 @@ void btn_use_click(control* p, mouseEvent ev){
 
 //Function to handle drop button click
 void btn_drop_click(control* p, mouseEvent ev){
-	
+	if (slot_selected == -1) return;//Exits function if no slot is selected
+	current.player.units[0]->inv[slot_selected] = NULL;//Removes inventory object
+}
+
+//Function to handle quit button click
+void quitButtonClick(control* p, mouseEvent ev){
+	current.view = GAME;
 }
 
 //Projectile next frame function
@@ -2465,7 +2534,7 @@ void projectile::nextFrame(){
 	}
 	
 	if (parent){//If there's a parent map
-		if (!parent->isFree(x, y) || dist >= range - 1){//If reached destination
+		if (!parent->isFree(x, y, flying) || dist >= range - 1){//If reached destination
 			parent->applyEffect(x, y, onTarget, direction);//Applies effect on parent map
 			
 			//Removes projectile from parent
@@ -2482,10 +2551,42 @@ int script::exec(campaign* c){
 	int i;//Counter
 	int result = VOID;//Script result (false on errors)
 	
-	deque<var> vars = c->getVars();//Generates variables
+	deque<var> vars = c->getVars();//Generates campaign variables
 		
 	for (i = 0; i < cmds.size(); i++){//For each instruction		
 		deque<string> tokens = tokenize(cmds[i], "\t ");
+		
+		int j;//Counter
+		for (j = 0; j < tokens.size(); j++){//For each token
+			if (tokens[j][0] == '$'){//If token is a variable
+				int k;//Counter
+				for (k = 0; k < vars.size(); k++){//For each variable
+					if (vars[k].name == tokens[j].substr(1)){//If variable is matching
+						tokens[j] = vars[k].value;//Replaces token with variable value
+						break;//Ends loop
+					}
+				}
+			}
+		}
+		
+		if (tokens[0] == "int" && tokens.size() >= 3){//Integer variable declaration
+			string s = "";//Expression
+			int j;//Counter
+			for (j = 2; j < tokens.size(); j++) s += tokens[j] + " ";//Adds each token to string
+			
+			var newVar (tokens[1], expr(s, &ops_int));//New variable
+			vars.push_back(newVar);//Adds variable
+		}
+		
+		if (tokens[0] == "var" && tokens.size() >= 3){//General variable declaration
+			string s = "";//Expression
+			int j;//Counter
+			for (j = 2; j < tokens.size(); j++) s += tokens[j] + " ";//Adds each token to string
+			s.erase(s.size() - 1);//Removes last space
+			
+			var newVar(tokens[1], s);//New variable
+			vars.push_back(newVar);//Adds variable
+		}
 		
 		if (tokens[0] == "createUnit" && tokens.size() >= 6){//Create unit instruction
 			string uId = tokens[1];//Unit id
@@ -2507,6 +2608,11 @@ int script::exec(campaign* c){
 		else if (tokens[0] == "wear" && tokens.size() >= 3){//Gives clothing to unit
 			unit* u = c->m->getUnit_name(tokens[1]);//Gets unit
 			if (u) u->wear(tokens[2]);//Gives cloth to unit
+		}
+		
+		else if (tokens[0] == "giveItem" && tokens.size() >= 3){//Gives item to unit
+			unit* u = c->m->getUnit_name(tokens[1]);//Gets unit
+			if (u) u->giveItem(tokens[2]);//Gives item to unit
 		}
 		
 		else if (tokens[0] == "giveControl" && tokens.size() >= 2){//Give control to player instruction
@@ -2549,7 +2655,7 @@ int script::exec(campaign* c){
 			int j;//Counter
 			for (j = 1; j < tokens.size(); j++) s += tokens[j] + " ";//Adds each token to string
 			
-			string result = expr(s, &ops_bool, &vars);//Calculates expression
+			string result = expr(s, &ops_bool);//Calculates expression
 			if (!atoi(result.c_str())) i++;//Skips next instruction if statement is false
 		}
 		
@@ -2580,28 +2686,28 @@ void unit::walk(int direction, bool turnOnly){
 		//Checks free tiles
 		switch (direction){//According to direction
 			case NORTH:
-			if (GETDIR(action) != direction && turnOnly || !parent->isFree(x, y - 1)){
+			if (GETDIR(action) != direction && turnOnly || !parent->isFree(x, y - 1, flying)){
 				turn(NORTH);
 				return;
 			}
 			break;
 			
 			case WEST:
-			if (GETDIR(action) != direction && turnOnly || !parent->isFree(x - 1, y)){
+			if (GETDIR(action) != direction && turnOnly || !parent->isFree(x - 1, y, flying)){
 				turn(WEST);
 				return;
 			}
 			break;
 			
 			case SOUTH:
-			if (GETDIR(action) != direction && turnOnly || !parent->isFree(x, y + 1)){
+			if (GETDIR(action) != direction && turnOnly || !parent->isFree(x, y + 1, flying)){
 				turn(SOUTH);
 				return;
 			}
 			break;
 			
 			case EAST:
-			if (GETDIR(action) != direction && turnOnly || !parent->isFree(x + 1, y)){
+			if (GETDIR(action) != direction && turnOnly || !parent->isFree(x + 1, y, flying)){
 				turn(EAST);
 				return;
 			}
@@ -2831,12 +2937,14 @@ void loadDatabase(object o){
 
 //Initialization function
 void game_init(string dbFile, string settingsFile, string themeFile){
+	/*Basic initialization*/{
 	srand(time(NULL));//Randomize
 		
 	uiInit();//Initializes UI
 	image_init();//Initializes image library
 		
 	initWindow(1000, 600, "Tales of Gydia");//Window setup
+	}
 	
 	/*Loads game database*/{
 	fileData f (dbFile);//File data for database
@@ -2889,6 +2997,9 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 	if (theme.getVar("button_released")) button_released = CACHEDIMG(theme.getVar("button_released")->value);//Loads released button picture
 	if (theme.getVar("button_pressed")) button_pressed = CACHEDIMG(theme.getVar("button_pressed")->value);//Loads pressed button picture
 	if (theme.getVar("button_col")) buttons_col = strtol(theme.getVar("button_col")->value.c_str(), NULL, 0);//Loads panel color
+	
+	if (theme.getVar("button_quit_released")) button_quit_released = CACHEDIMG(theme.getVar("button_quit_released")->value);//Loads released quit button picture
+	if (theme.getVar("button_quit_pressed")) button_quit_pressed = CACHEDIMG(theme.getVar("button_quit_pressed")->value);//Loads pressed quit button picture
 	}
 	
 	/*Player info panel*/{
@@ -2900,6 +3011,15 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 	infoPanel.printMethod = bigPanelPrint;
 	infoPanel.lockPosition = false;
 	infoPanel.setClickArea();
+	
+	//Quit button
+	btn_quit.w = button_quit_released->w;
+	btn_quit.h = button_quit_released->h;
+	btn_quit.x = infoPanel.w - btn_quit.w - 7;
+	btn_quit.y = 7;
+	btn_quit.printMethod = quitPrint;
+	btn_quit.addHandler_click(quitButtonClick);
+	infoPanel.controls.push_back(&btn_quit);
 	
 	//Name text box
 	nameBox.x = 5;
@@ -2985,6 +3105,8 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 		inventoryPanel.printMethod = bigPanelPrint;
 		inventoryPanel.setClickArea();
 		
+		inventoryPanel.controls.push_back(&btn_quit);
+		
 		btn_use.x = 10 + 4 * slot_pict->w + (bigPanel_pict->w - 10 - 4 * slot_pict->w - button_released->w) / 2;
 		btn_use.y = 10 + 3 * slot_pict->h + 15;
 		btn_use.w = button_released->w;
@@ -3047,18 +3169,27 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 		inventoryPanel.controls.push_back(&weaponBox);
 	}
 	
-	//Sets operators
+	/*Sets operators*/{
 	op bool_equal ("=", 1, ops_bool_equal);
 	op bool_greater (">", 1, ops_bool_greater);
 	op bool_less ("<", 1, ops_bool_less);
 	op bool_and ("&", 0, ops_bool_and);
 	op bool_or ("|", 0, ops_bool_or);
+	op int_sum ("+", 0, ops_int_sum);
+	op int_subt ("-", 0, ops_int_subt);
+	op int_mult ("*", 1, ops_int_mult);
+	op int_div ("/", 1, ops_int_div);
 	
 	ops_bool.push_back(bool_equal);
 	ops_bool.push_back(bool_greater);
 	ops_bool.push_back(bool_less);
 	ops_bool.push_back(bool_and);
 	ops_bool.push_back(bool_or);
+	ops_int.push_back(int_sum);
+	ops_int.push_back(int_subt);
+	ops_int.push_back(int_mult);
+	ops_int.push_back(int_div);
+	}
 }
 
 #endif

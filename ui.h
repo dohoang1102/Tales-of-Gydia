@@ -7,11 +7,11 @@
 #include <list>//Include lists
 #include <cmath>//Include C math
 
-#include <SDL\SDL.h>//Include base SDL library
-#include <SDL\SDL_ttf.h>//Include SDL ttf library
+#include <SDL/SDL.h>//Include base SDL library
+#include <SDL/SDL_ttf.h>//Include SDL ttf library
 
-#include "SDL\SDL_rotozoom.c"//Include SDL rotozoom library (required by following header)
-#include "SDL\SDL_gfxPrimitives.c"//Include SDL gfx library
+#include "SDL/SDL_rotozoom.c"//Include SDL rotozoom library (required by following header)
+#include "SDL/SDL_gfxPrimitives.c"//Include SDL gfx library
 
 #define CLICKTIME				250//Milliseconds to distinguish click and drag
 #define GRABTOLERANCE			0//Tolerance to drag panels

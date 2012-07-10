@@ -44,7 +44,7 @@ op* getOp(string sign, int priority, deque<op> *operators){
 
 //Expression solving function
 //Takes the expression source, the list of available operators and a pointer to deque of variables
-string expr(string source, deque<op> *operators, deque<var> *vars = NULL){
+string expr(string source, deque<op> *operators){
 	string s (source);//Copies string
 	
 	deque<string> tokens = tokenize(s, "\t ");//String tokens
@@ -52,20 +52,6 @@ string expr(string source, deque<op> *operators, deque<var> *vars = NULL){
 	sort(operators->begin(), operators->end(), opCompare);//Sorts operators by priority
 	
 	int i;//Counter
-	if (vars){//If there's a variable deque
-		for (i = 0; i < tokens.size(); i++){//For each token
-			if (tokens[i][0] == '$'){//If token is a variable
-				int j;//Counter
-				for (j = 0; j < vars->size(); j++){//For each variable
-					if ((*vars)[j].name == tokens[i].substr(1)){//If var matches
-						tokens[i] = (*vars)[j].value;//Sets token
-						break;//Exits loop
-					}
-				}
-			}
-		}
-	}
-	
 	int curPriority;//Current priority
 	for (curPriority = 0; curPriority <= operators->back().priority; curPriority++){//For each priority value
 		for (i = tokens.size() - 1; i >= 0; i--){//For each token (from the last to the first)
@@ -76,7 +62,7 @@ string expr(string source, deque<op> *operators, deque<var> *vars = NULL){
 				for (j = 0; j < i; j++) left += tokens[j] + " ";//Fills left side
 				for (j = i + 1; j < tokens.size(); j++) right += tokens[j] + " ";//Fills right side
 				
-				string result = getOp(tokens[i], curPriority, operators)->func(expr(left, operators, vars), expr(right, operators, vars));//Calculates result
+				string result = getOp(tokens[i], curPriority, operators)->func(expr(left, operators), expr(right, operators));//Calculates result
 				return result;//Returns result
 			}
 		}
