@@ -30,16 +30,16 @@ int main(int argc, char* argv[]){
 					break;
 					
 					case SDLK_ESCAPE:
-					if (current.view != GAME) current.view = GAME;
-					else running = false;
+					if (current.view == GAME) running = false;
+					else if (current.view != LEVELUP_1 && current.view != LEVELUP_2) current.view = GAME;
 					break;
 					
 					case SDLK_i:
-					current.view = INVENTORY;
+					if (current.view != LEVELUP_1 && current.view != LEVELUP_2) current.view = INVENTORY;
 					break;
 					
 					case SDLK_u:
-					current.view = PLAYER;
+					if (current.view != LEVELUP_1 && current.view != LEVELUP_2) current.view = PLAYER;
 					break;
 				}
 			}

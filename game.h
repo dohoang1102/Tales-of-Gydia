@@ -36,6 +36,7 @@ int DB_VARIABLEWARNING		= getErrorCode();//Non-lethal variable error in database
 #define OBJTYPE_PROJECTILE	"projectile"//Object type projectile
 #define OBJTYPE_ITEM		"item"//Object type item
 #define OBJTYPE_WEAPON		"weapon"//Object type weapon
+#define OBJTYPE_SPELL		"spell"//Object type spell
 #define OBJTYPE_CLOTH		"cloth"//Object type cloth
 #define OBJTYPE_UNIT		"unit"//Object type unit
 #define OBJTYPE_MAP			"map"//Object type map
@@ -86,6 +87,7 @@ int DB_VARIABLEWARNING		= getErrorCode();//Non-lethal variable error in database
 #define ACT_DEAD			0x40//Dead
 #define ACT_REST			0x50//Resting
 #define ACT_TURN			0x60//Turning
+#define ACT_SPELL			0x70//Casting spell
 
 #define GETACODE(ACT,DIR)	((ACT) | (DIR))//Macro to get action and direction code out of separate action and direction
 #define GETACT(CODE) 		((CODE) & 0xF0)//Macro to get action code out of code with action and direction
@@ -99,17 +101,21 @@ int DB_VARIABLEWARNING		= getErrorCode();//Non-lethal variable error in database
 #define DISPOSABLE			0//Disposable item
 #define WEAPON				1//Weapon
 #define CLOTHING			2//Clothing
+#define SPELL				3//Spell
 
 //Game views
 #define GAME				0//Game view
 #define PLAYER				1//Player info view
 #define INVENTORY			2//Inventory view
+#define LEVELUP_1			3//Level up view
+#define LEVELUP_2			4//Level up view
 
 //Game calculations: damage, mana costs, ...
 #define MINDAMAGE							-1//Minimum damage that can be taken (if calculates lower damage, replaced with this value)
 #define CALC_DAMAGEDEALT(BASE, STAT)		((BASE) * (1 + STAT / 100))//Dealt damage calculation: [base weapon damage] * [strength/intelligence] / 10 - this means: strength = 1 => 10% damage bonus on weapons
 #define CALC_DAMAGETAKEN(BASE, STAT, MULT)	((BASE) * ((MULT) - (STAT) / 100) >= MINDAMAGE ? MINDAMAGE : ceil((BASE) * ((MULT) - (STAT) / 100)))//Damage taken calculation: [base damage] * [resistance multiplier reduced of stat/100]
 #define CALC_RECOVERY(STAT1, STAT2)			((STAT1) * (STAT2) > 100 ? (STAT1) * (STAT2) / 100 : 1)//Recovery calculation
+#define CALC_REQUIREDXP(LEVEL)				((LEVEL) * (LEVEL) * 5)//Required xp calculation
 
 class unit;//Unit class prototype
 class map;//Map class prototype
@@ -148,6 +154,12 @@ SDL_Rect bar_hits_offset = {0, 0};//Hitbar offset
 SDL_Surface* bar_mana = NULL;//Manabar fill
 SDL_Rect bar_mana_offset = {0, 0};//Manabar offset
 
+SDL_Surface* bar_xp_frame = NULL;//Frame for xp bar
+SDL_Rect bar_xp_frame_offset = {0, 0};//Xp bar offset
+
+SDL_Surface* bar_xp = NULL;//Xp bar fill
+SDL_Rect bar_xp_offset = {0, 0};//Xp fill offset
+
 //Dialogs
 SDL_Surface* dialog_pict = NULL;//Dialog box picture
 SDL_Surface* dialog_text = NULL;//Dialog text picture
@@ -160,7 +172,7 @@ button btn_quit;//Quit button
 SDL_Surface* bigPanel_pict = NULL;//Big panel picture
 panel inventoryPanel;//Inventory panel
 imageBox inv_slots [12];//Inventory slots boxes
-imageBox headBox, bodyBox, legsBox, weaponBox;//Equipped stuff boxes
+imageBox headBox, bodyBox, legsBox, weaponBox, spellBox;//Equipped stuff boxes
 
 SDL_Surface* slot_pict = NULL;//Slot box picture
 SDL_Surface* slot_pict_focus = NULL;//Focused slot box picture
@@ -170,13 +182,25 @@ int slot_selected = -1;
 button btn_use, btn_drop;//Use and drop inventory buttons
 
 //Windows: player info
-SDL_Surface* infoPanel_pict = NULL;//Info panel picture
 panel infoPanel;//Player info panel
 textBox nameBox;//Player name box
 textBox hpBox, mpBox;//Player hp and mp box
+textBox xpBox;//Player xp box
 textBox strBox, intBox, conBox, wisBox;//Statistics boxes
 textBox effBox;//Effects box
 list<textBox*> resBox;//Resistance boxes
+
+//Windows: level up
+SDL_Surface* midPanel_pict = NULL;//Middle-size panel picture
+
+//Level up 1: HP/MP
+textBox levelUp_caption;//Level up caption
+
+panel hp_mp_levelUp;//First level up panel
+button hpUp, mpUp;//Hits and mana buttons
+
+panel stats_levelUp;//Stat level up panel
+button strUp, conUp, intUp, wisUp;//Stats buttons
 
 //Colors
 Uint32 infoPanel_col1 = 0x000000;//Color for main stuff in info panel
@@ -201,10 +225,10 @@ string ops_int_subt(string a, string b){ return toString(atoi(a.c_str()) - atoi(
 string ops_int_mult(string a, string b){ return toString(atoi(a.c_str()) * atoi(b.c_str())); }
 string ops_int_div(string a, string b){ return toString(atoi(a.c_str()) / atoi(b.c_str())); }
 
-//Panel printing function
-void panelPrint(SDL_Surface* target, control* p){
+//Mid panel printing function
+void midPanelPrint(SDL_Surface* target, control* p){
 	SDL_Rect offset = {p->x, p->y};//Offset rectangle
-	SDL_BlitSurface(infoPanel_pict, NULL, target, &offset);//Prints panel picture
+	SDL_BlitSurface(midPanel_pict, NULL, target, &offset);//Prints panel picture
 	
 	panel* e = (panel*) p;//Converts to panel
 	list<control*>::iterator i;//Iterator for controls
@@ -609,6 +633,7 @@ class effect: public content {
 	
 	bool img;//Flag indicating if image was given
 	image icon;//Icon shown when effect is active
+	unit* owner;//Effect owner
 	
 	//Constructor
 	effect(){
@@ -623,6 +648,7 @@ class effect: public content {
 		shot = "";
 		duration = 0;
 		img = false;
+		owner = NULL;
 	}
 	
 	//Function to load from script object
@@ -748,6 +774,7 @@ class projectile: public content{
 	int dist;//Distance made by projectile
 	
 	map *parent;//Projectile parent map
+	unit *owner;//Projectile owner
 	
 	//Constructor
 	projectile(){
@@ -797,13 +824,14 @@ list<projectile> projectileDb;//Projectile database
 
 //Weapon class
 class weapon: public item{
-	public:
+	public:	
 	//Graphics
 	string strikeAnim;//Player strike animation
 	int strikeFrame;//Frame of animation when unit strikes
 	
 	//Effects and stats
 	effect onEquip;//On-equip effect
+	effect onStrike;//On-strike effect
 	effect onTarget;//On-target effect
 	
 	//Constructor
@@ -811,7 +839,7 @@ class weapon: public item{
 		id = "";
 		author = "";
 		description = "";
-
+		
 		itemType = WEAPON;
 	
 		strikeAnim = "";
@@ -821,17 +849,22 @@ class weapon: public item{
 	
 	//Function to load from script object
 	void fromScriptObj(object o){
-		if (o.type == OBJTYPE_WEAPON){//If types are matching
+		if (o.type == OBJTYPE_WEAPON || o.type == OBJTYPE_SPELL){//If types are matching
 			item::fromScriptObj(o);//Loads base content data
+			
+			if (o.type == OBJTYPE_WEAPON) itemType = WEAPON;
+			else itemType = SPELL;
 			
 			var* strikeAnim = o.getVar("strikeAnim");//Strike animation variable
 			var* strikeFrame = o.getVar("strikeFrame");//Strike frame variable
 			object* onEquip = o.getObj("onEquip");//On equip effect object
+			object* onStrike = o.getObj("onStrike");//On strike effect object
 			object* onTarget = o.getObj("onTarget");//On target effct object
-			
+
 			if (strikeAnim) this->strikeAnim = strikeAnim->value;//Gets strike animation
 			if (strikeFrame) this->strikeFrame = strikeFrame->intValue();//Gets strike frame
 			if (onEquip) this->onEquip.fromScriptObj(*onEquip);//Loads on equip effect
+			if (onStrike) this->onStrike.fromScriptObj(*onStrike);//Loads on strike effect
 			if (onTarget) this->onTarget.fromScriptObj(*onTarget);//Loads on target effect
 		}
 	}
@@ -876,8 +909,13 @@ class unit: public content{
 	list<effect> tempEffects;//Temporary effects
 	list<damType> resistances;//Per-type resistances
 	
+	//Experience
+	int xp, level;//Current xp and level
+	int xpReward;//Unit xp reward
+	
 	//Fighting
 	weapon *primary;//Primary weapon
+	weapon *spell;//Active spell
 	
 	//Clothes
 	cloth* head;
@@ -890,6 +928,8 @@ class unit: public content{
 	//Various
 	bool moved;//Flag indicating if unit has moved
 	bool flying;//Flag indicating if unit can fly
+	
+	unit* lastEffectOwner;//Owner of the last effect applied to unit (for XP giving)
 	
 	//Constructor
 	unit(){
@@ -919,7 +959,12 @@ class unit: public content{
 		baseWisdom = 1;
 		sight = 5;
 		
+		xp = 0;
+		level = 1;
+		xpReward = 1;
+		
 		primary = NULL;
+		spell = NULL;
 		
 		head = NULL;
 		body = NULL;
@@ -930,6 +975,8 @@ class unit: public content{
 		
 		moved = false;
 		flying = false;
+		
+		lastEffectOwner = NULL;
 	}
 	
 	//Unit printing function
@@ -941,12 +988,13 @@ class unit: public content{
 		}
 		
 		anims.print(target, x + dX, y + dY);//Prints using animSet printing function (prints current frame of current animation)
-		if (GETACT(action) == ACT_STRIKE && primary) primary->print(target, x + dX, y + dY);//Prints weapon
-	
+		
 		//Prints clothes
 		if (head) head->print(target, x + dX, y + dY);
 		if (body) body->print(target, x + dX, y + dY);
 		if (legs) legs->print(target, x + dX, y + dY);
+		
+		if (GETACT(action) == ACT_STRIKE && primary) primary->print(target, x + dX, y + dY);//Prints weapon
 		
 		//Prints effect icons
 		list<effect>::iterator e;//Effect iterator
@@ -973,14 +1021,26 @@ class unit: public content{
 			var* wisdom = o.getVar("wisdom");//Wisdom variable
 			var* sight = o.getVar("sight");//Sight variable
 			var* flying = o.getVar("flying");//Flying variable
+			var* xpReward = o.getVar("xpReward");//XP reward
 			
 			if (anims) this->anims.fromScriptObj(*anims);//Loads animations
 			if (hits) this->baseMaxHits = hits->intValue();//Gets max hits
+			if (mana) this->baseMaxMana = mana->intValue();//Gets mana
+			
+			//Gets stats
+			if (strength) this->baseStrength = strength->intValue();
+			if (constitution) this->baseConstitution = constitution->intValue();
+			if (intelligence) this->baseIntelligence = intelligence->intValue();
+			if (wisdom) this->baseWisdom = wisdom->intValue();
+			
 			if (sight) this->sight = sight->intValue();//Gets sight
 			if (flying) this->flying = flying->intValue();//Gets flying
 			
+			if (xpReward) this->xpReward = xpReward->intValue();//Gets xp reward
+			
 			this->anims.setAnim("idle_s");//Turns south
 			this->baseHits = this->baseMaxHits;//Sets hits
+			this->baseMana = this->baseMaxMana;//Sets mana
 			
 			deque<object>::iterator i;//Sub object iterator
 			for (i = o.o.begin(); i != o.o.end(); i++){//For each sub-object
@@ -1034,10 +1094,30 @@ class unit: public content{
 		else stop();
 	}
 	
+	//Spellcast function
+	void spellcast(){
+		if (spell && mana() >= -spell->onStrike.mana){//If weapon is valid and there's enough mana to cast spell
+			action = GETACODE(ACT_SPELL, GETDIR(action));//Sets action code
+			anims.setAnim(spell->strikeAnim + "_" + dirToString(GETDIR(action)));//Sets striking animation
+			if (head) head->overlay.setAnim(spell->strikeAnim + "_" + dirToString(GETDIR(action)));//Sets cloths animation
+			if (body) body->overlay.setAnim(spell->strikeAnim + "_" + dirToString(GETDIR(action)));//Sets cloths animation
+			if (legs) legs->overlay.setAnim(spell->strikeAnim + "_" + dirToString(GETDIR(action)));//Sets cloths animation
+			
+			if (spell->imgGiven){
+				spell->overlay.setAnim("cast_" + dirToString(GETDIR(action)));//Sets weapon animation
+				spell->overlay.current()->curFrame = 0;//Restarts animation
+			}
+			
+			moved = true;
+		}
+		
+		else stop();
+	}
+	
 	//Unit rests - skips turn, recovers HP - MP
 	void rest(){
-		varyHits (CALC_RECOVERY(strength(), constitution()));//Recovers health
-		varyMana (CALC_RECOVERY(intelligence(), wisdom()));//Recovers mana
+		if (hits() < maxHits() / 2)	varyHits (CALC_RECOVERY(strength(), constitution()));//Recovers health
+		if (mana() < maxMana() / 2) varyMana (CALC_RECOVERY(intelligence(), wisdom()));//Recovers mana
 		moved = true;
 	}
 	
@@ -1048,6 +1128,8 @@ class unit: public content{
 		if (head) head->overlay.setAnim("dying");//Sets cloths animation
 		if (body) body->overlay.setAnim("dying");//Sets cloths animation
 		if (legs) legs->overlay.setAnim("dying");//Sets cloths animation
+		
+		if (lastEffectOwner) lastEffectOwner->xpGain(xpReward);//Effect owner earns xp
 	}
 	
 	//Function to go to next frame
@@ -1062,6 +1144,7 @@ class unit: public content{
 	void execOrder(order o){
 		if (GETACT(o.code) == ACT_WALK) walk(GETDIR(o.code));//Checks for walking orders
 		else if (GETACT(o.code) == ACT_STRIKE) strike();//Checks for striking orders
+		else if (GETACT(o.code) == ACT_SPELL) spellcast();//Checks for spellcast orders
 		else if (GETACT(o.code) == ACT_REST) rest();//Checks for resting orders
 		else if (GETACT(o.code) == ACT_TURN) turn(GETDIR(o.code));//Checks for turning orders
 		else stop();//Stops on any other code
@@ -1130,7 +1213,7 @@ class unit: public content{
 				inv[slot] = (item*) d;
 			}
 			
-			if (a->itemType == WEAPON){//If item is weapon
+			if (a->itemType == WEAPON || a->itemType == SPELL){//If item is weapon
 				weapon* w = new weapon;
 				*w = *((weapon*) a);
 				inv[slot] = (item*) w;
@@ -1290,6 +1373,8 @@ class unit: public content{
 	
 	//Function to apply an effect to the unit
 	void applyEffect(effect e){
+		if (e.hits < 0) lastEffectOwner = e.owner;//If damage effect, saves owner
+		
 		if (e.duration == 0){//Instant/permanente effect
 			//Applies effect to stats
 			varyHits(e.hits, &e.type);
@@ -1323,6 +1408,11 @@ class unit: public content{
 			}
 		}
 	}
+	
+	//Function for xp gain
+	void xpGain(int amount){
+		xp += amount;//Adds xp
+	}
 };
 
 //Function determining if an unit comes before another one (lower y or equal y and lower x)
@@ -1336,6 +1426,7 @@ list<unit> unitDb;//Units database
 effect weapon::getEff(unit* u){
 	effect e = onTarget;//Base effect
 	e.hits = CALC_DAMAGEDEALT(e.hits, (e.type.superType == DAM_PHYSICAL ? u->strength() : u->intelligence()));//Calculates damage
+	e.owner = u;//Sets owner
 	return e;//Returns effect
 }
 
@@ -1367,13 +1458,14 @@ class controller{
 		Uint8* keys = SDL_GetKeyState(NULL);//Gets key states
 		
 		//Walking orders
-		if (keys[SDLK_UP]){ giveOrder({GETACODE(ACT_WALK, NORTH), ""}); return true;}
-		else if (keys[SDLK_LEFT]){ giveOrder({GETACODE(ACT_WALK, WEST), ""}); return true;}
-		else if (keys[SDLK_DOWN]){ giveOrder({GETACODE(ACT_WALK, SOUTH), ""}); return true;}
-		else if (keys[SDLK_RIGHT]){ giveOrder({GETACODE(ACT_WALK, EAST), ""}); return true;}
+		if (keys[SDLK_w]){ giveOrder({GETACODE(ACT_WALK, NORTH), ""}); return true;}
+		else if (keys[SDLK_a]){ giveOrder({GETACODE(ACT_WALK, WEST), ""}); return true;}
+		else if (keys[SDLK_s]){ giveOrder({GETACODE(ACT_WALK, SOUTH), ""}); return true;}
+		else if (keys[SDLK_d]){ giveOrder({GETACODE(ACT_WALK, EAST), ""}); return true;}
 		
 		//Striking orders
-		else if (keys[SDLK_SPACE]){ giveOrder({ACT_STRIKE, ""}); return true;}
+		else if (keys[SDLK_q]){ giveOrder({ACT_STRIKE, ""}); return true;}
+		else if (keys[SDLK_e]){ giveOrder({ACT_SPELL, ""}); return true;}
 		
 		//Resting orders
 		else if (keys[SDLK_RETURN]){ giveOrder({ACT_REST, ""}); return true;}
@@ -1960,7 +2052,7 @@ class map: public content{
 		deque<unit*>::iterator i;//Iterator
 		
 		if (e.shot != ""){//If there's a projectile to shoot
-			shoot (x, y, direction, e.shot);//Shoots
+			shoot (x, y, direction, e.shot, e.owner);//Shoots
 		}
 		
 		for(i = units.begin(); i != units.end(); i++){//For each unit
@@ -2031,7 +2123,7 @@ class map: public content{
 	}
 	
 	//Function to shoot a projectile
-	void shoot(int x, int y, int dir, string pId){
+	void shoot(int x, int y, int dir, string pId, unit* owner = NULL){
 		projectile* p = new projectile;//New projectile
 		projectile* q = get(&projectileDb, pId);//Gets projectile
 		
@@ -2041,6 +2133,7 @@ class map: public content{
 		p->direction = dir;
 		p->anims.setAnim(dirToString(dir));
 		p->parent = this;
+		p->onTarget.owner = owner;		
 		
 		projs.push_back(p);//Adds projectile
 	}
@@ -2069,7 +2162,7 @@ class script {
 		}
 	}
 	
-	//Execution function
+	//Execution function - campaign
 	int exec(campaign* c);
 };
 
@@ -2146,6 +2239,27 @@ class sequence: public content{
 	}
 };
 
+//Unit query class
+class uQuery {
+	public:
+	string id;//Query id
+	deque<unit*> units;//Units in query
+	
+	//Constructor
+	uQuery(){
+		id = "";
+	}
+	
+	//Function to remove dead units from query
+	void clearDead(){
+		deque<unit*>::iterator i;//Unit iterator
+		
+		for (i = units.begin(); i != units.end(); i++){//For each unit in query
+			if ((*i)->hits() <= 0){ i = units.erase(i); i--; }//Erases unit if dead
+		}
+	}
+};
+
 //Campaign class
 class campaign: public content{
 	public:
@@ -2154,6 +2268,8 @@ class campaign: public content{
 	controller player;//Player controller
 	controller ai;//AI controller
 	int turn;//Current turn
+	
+	deque<uQuery> queries;//Unit queries
 	
 	deque<sequence> seq;//Sequences of campaign, in order of execution
 	int curSequence;//Current sequence index
@@ -2230,6 +2346,23 @@ class campaign: public content{
 				
 				SDL_BlitSurface(bar_mana, &clip, target, &o);//Prints manabar
 			}
+			
+			if (bar_xp){//If there's a valid xp bar
+				SDL_Rect o = bar_xp_offset;//Copies offset
+				
+				SDL_Rect clip;//Clip rectangle
+				clip.x = 0;
+				clip.y = 0;
+				clip.h = bar_xp->h;//Sets clip height
+				clip.w = bar_xp->w * hero->xp / CALC_REQUIREDXP(hero->level);//Sets clip width
+				
+				SDL_BlitSurface(bar_xp, &clip, target, &o);//Prints xp bar
+			}
+		}
+		
+		if (bar_xp_frame){//If there's a valid xp bar frame
+			SDL_Rect o = bar_xp_frame_offset;//Copies offset
+			SDL_BlitSurface(bar_xp_frame, NULL, target, &o);//Blits frame
 		}
 		
 		if (bar_frame){//If there's a valid bar frame
@@ -2252,6 +2385,16 @@ class campaign: public content{
 		if (view == INVENTORY){
 			updateInventoryPanel();//Updates inventory panel
 			inventoryPanel.print(target);//Prints inventory panel
+		}
+		
+		//Level up 1
+		if (view == LEVELUP_1){
+			hp_mp_levelUp.print(target);//Prints levelup panel
+		}
+		
+		//Level up 2
+		if (view == LEVELUP_2){
+			stats_levelUp.print(target);//Prints levelup panel
 		}
 	}
 	
@@ -2291,6 +2434,16 @@ class campaign: public content{
 	
 	//End turn function
 	void nextTurn(){
+		deque<uQuery>::iterator i;//Query iterator
+		for (i = queries.begin(); i != queries.end(); i++) i->clearDead();//Removes dead units from query
+		
+		if (player.units.size() > 0 && player.units[0]->xp >= CALC_REQUIREDXP(player.units[0]->level)){//If player reached new level
+			view = LEVELUP_1;//Shows level up dialog
+			
+			player.units[0]->xp -= CALC_REQUIREDXP(player.units[0]->level);//Removes xp
+			player.units[0]->level++;//Next level
+		}
+		
 		if (turn == 0) turn++;
 		
 		else if (turn == 1){
@@ -2343,6 +2496,7 @@ class campaign: public content{
 			nameBox.text = player.units[0]->name;//Sets name box
 			hpBox.text = "HP: " + toString(player.units[0]->hits()) + "/" + toString(player.units[0]->maxHits());//HP box
 			mpBox.text = "MP: " + toString(player.units[0]->mana()) + "/" + toString(player.units[0]->maxMana());//MP box
+			xpBox.text = "level " + toString(player.units[0]->level) + " - XP: " + toString(player.units[0]->xp) + "/" + toString(CALC_REQUIREDXP(player.units[0]->level));//Xp box
 			strBox.text = "str: " + toString(player.units[0]->strength());//Sets strength box
 			conBox.text = "con: " + toString(player.units[0]->constitution());//Sets constitution box
 			intBox.text = "int: " + toString(player.units[0]->intelligence());//Sets intelligence box
@@ -2384,6 +2538,9 @@ class campaign: public content{
 			if (player.units[0]->primary) weaponBox.i = &player.units[0]->primary->icon;
 			else weaponBox.i = NULL;
 			
+			if (player.units[0]->spell) spellBox.i = &player.units[0]->spell->icon;
+			else spellBox.i = NULL;
+			
 			//Prints inventory boxes
 			int i;
 			for (i = 0; i < 12; i++){
@@ -2409,6 +2566,8 @@ class campaign: public content{
 	void events(SDL_Event e){
 		if (view == PLAYER) infoPanel.checkEvents(e);
 		else if (view == INVENTORY) inventoryPanel.checkEvents(e);
+		else if (view == LEVELUP_1) hp_mp_levelUp.checkEvents(e);
+		else if (view == LEVELUP_2) stats_levelUp.checkEvents(e);
 	}
 	
 	//Function to get a deque of campaign variables
@@ -2425,6 +2584,13 @@ class campaign: public content{
 			result.push_back(pName);
 			result.push_back(pX);
 			result.push_back(pY);
+		}
+		
+		deque<uQuery>::iterator i;//Query iterator
+		for (i = queries.begin(); i != queries.end(); i++){//For each query
+			var qCount (i->id + ".count", i->units.size());
+			
+			result.push_back(qCount);
 		}
 		
 		return result;//Returns result
@@ -2448,6 +2614,11 @@ void btn_use_click(control* p, mouseEvent ev){
 		
 		else if (i->itemType == WEAPON && !current.player.units[0]->primary){//if item is a weapon and player has no weapon
 			current.player.units[0]->primary = (weapon*) i;//Equips weapon
+			current.player.units[0]->inv[slot_selected] = NULL;//Removes from inventory
+		}
+		
+		else if (i->itemType == SPELL && !current.player.units[0]->spell){//If item is a spell and player has no spell
+			current.player.units[0]->spell = (weapon*) i;//Equips spell
 			current.player.units[0]->inv[slot_selected] = NULL;//Removes from inventory
 		}
 		
@@ -2493,6 +2664,11 @@ void btn_use_click(control* p, mouseEvent ev){
 			current.player.units[0]->inv[slot] = (weapon*) current.player.units[0]->primary;
 			current.player.units[0]->primary = NULL;
 		}
+		
+		if (slot_selected == 16){//If selected spell slot
+			current.player.units[0]->inv[slot] = (weapon*) current.player.units[0]->spell;
+			current.player.units[0]->spell = NULL;
+		}
 	}
 }
 
@@ -2500,6 +2676,46 @@ void btn_use_click(control* p, mouseEvent ev){
 void btn_drop_click(control* p, mouseEvent ev){
 	if (slot_selected == -1) return;//Exits function if no slot is selected
 	current.player.units[0]->inv[slot_selected] = NULL;//Removes inventory object
+}
+
+//Function to handle hpUp click
+void hpUp_click(control* p, mouseEvent ev){
+	current.player.units[0]->baseMaxHits += 5;
+	current.player.units[0]->varyHits(5);
+	
+	current.view = LEVELUP_2;
+}
+
+//Function to handle mpUp click
+void mpUp_click(control* p, mouseEvent ev){
+	current.player.units[0]->baseMaxMana += 5;
+	current.player.units[0]->varyMana(5);
+	
+	current.view = LEVELUP_2;
+}
+
+//Function to handle strUp click
+void strUp_click(control* p, mouseEvent ev){
+	current.player.units[0]->baseStrength += 1;
+	current.view = GAME;
+}
+
+//Function to handle conUp click
+void conUp_click(control* p, mouseEvent ev){
+	current.player.units[0]->baseConstitution += 1;
+	current.view = GAME;
+}
+
+//Function to handle intUp click
+void intUp_click(control* p, mouseEvent ev){
+	current.player.units[0]->baseIntelligence += 1;
+	current.view = GAME;
+}
+
+//Function to handle intUp click
+void wisUp_click(control* p, mouseEvent ev){
+	current.player.units[0]->baseWisdom += 1;
+	current.view = GAME;
 }
 
 //Function to handle quit button click
@@ -2569,6 +2785,7 @@ int script::exec(campaign* c){
 			}
 		}
 		
+		/*Variable handling instructions*/{
 		if (tokens[0] == "int" && tokens.size() >= 3){//Integer variable declaration
 			string s = "";//Expression
 			int j;//Counter
@@ -2587,7 +2804,9 @@ int script::exec(campaign* c){
 			var newVar(tokens[1], s);//New variable
 			vars.push_back(newVar);//Adds variable
 		}
+		}
 		
+		/*Unit creation*/{
 		if (tokens[0] == "createUnit" && tokens.size() >= 6){//Create unit instruction
 			string uId = tokens[1];//Unit id
 			string uName = tokens[2];//Unit name
@@ -2600,27 +2819,7 @@ int script::exec(campaign* c){
 			if (u && tokens.size() >= 8) u->turn(atoi(tokens[7].c_str()));//Picks direction if defined
 		}
 		
-		else if (tokens[0] == "giveWeapon_primary" && tokens.size() >= 3){//Give primary weapon instruction
-			unit* u = c->m->getUnit_name(tokens[1]);//Gets unit
-			if (u) u->giveWeapon_primary(tokens[2]);//Gives weapon to unit
-		}
-		
-		else if (tokens[0] == "wear" && tokens.size() >= 3){//Gives clothing to unit
-			unit* u = c->m->getUnit_name(tokens[1]);//Gets unit
-			if (u) u->wear(tokens[2]);//Gives cloth to unit
-		}
-		
-		else if (tokens[0] == "giveItem" && tokens.size() >= 3){//Gives item to unit
-			unit* u = c->m->getUnit_name(tokens[1]);//Gets unit
-			if (u) u->giveItem(tokens[2]);//Gives item to unit
-		}
-		
-		else if (tokens[0] == "giveControl" && tokens.size() >= 2){//Give control to player instruction
-			unit* u = c->m->getUnit_name(tokens[1]);//Gets unit
-			if (u) c->player.addUnit(u);//Gives unit to player
-		}
-		
-		else if (tokens[0] == "createPlayer" && tokens.size() >= 6){//Create unit controlled by player instruction
+		if (tokens[0] == "createPlayer" && tokens.size() >= 6){//Create unit controlled by player instruction
 			string uId = tokens[1];//Unit id
 			string uName = tokens[2];//Unit name
 			int uX = atoi(tokens[3].c_str());//Unit x
@@ -2635,7 +2834,7 @@ int script::exec(campaign* c){
 			}
 		}
 		
-		else if (tokens[0] == "createAI" && tokens.size() >= 6){//Create unit controlled by AI
+		if (tokens[0] == "createAI" && tokens.size() >= 6){//Create unit controlled by AI
 			string uId = tokens[1];//Unit id
 			string uName = tokens[2];//Unit name
 			int uX = atoi(tokens[3].c_str());//Unit x
@@ -2649,8 +2848,105 @@ int script::exec(campaign* c){
 				c->ai.addUnit(u);//Gives control to player
 			}
 		}
+		}
 		
-		else if (tokens[0] == "if" && tokens.size() >= 2){//If statement
+		/*Inventory handling*/{
+		if (tokens[0] == "giveWeapon_primary" && tokens.size() >= 3){//Give primary weapon instruction
+			unit* u = c->m->getUnit_name(tokens[1]);//Gets unit
+			if (u) u->giveWeapon_primary(tokens[2]);//Gives weapon to unit
+		}
+		
+		if (tokens[0] == "wear" && tokens.size() >= 3){//Gives clothing to unit
+			unit* u = c->m->getUnit_name(tokens[1]);//Gets unit
+			if (u) u->wear(tokens[2]);//Gives cloth to unit
+		}
+		
+		if (tokens[0] == "giveItem" && tokens.size() >= 3){//Gives item to unit
+			unit* u = c->m->getUnit_name(tokens[1]);//Gets unit
+			if (u) u->giveItem(tokens[2]);//Gives item to unit
+		}
+		}
+		
+		/*Querying*/{
+		if (tokens[0] == "query" && tokens.size() >= 3){
+			string s = "";//Expression
+			int i;//Counter
+			for (i = 2; i < tokens.size(); i++) s += tokens[i] + " ";//Adds each token to string
+			
+			uQuery newQuery;//New query
+			newQuery.id = tokens[1];//Sets query id
+			
+			deque<unit*>::iterator j;//Counter
+			for (j = c->m->units.begin(); j < c->m->units.end(); j++){//For each unit in map
+				deque<string> toks = tokenize(s, " ");//Expression tokens
+				
+				int k;//Counter
+				for (k = 0; k < toks.size(); k++){//For each token
+					if (toks[k][0] == '$'){//If token is a variable
+						string vName = toks[k].substr(1);//Variable name
+						
+						if (vName == "id") toks[k] = (*j)->id;
+						if (vName == "name") toks[k] = (*j)->name;
+						
+						if (vName == "x") toks[k] = toString((*j)->x);
+						if (vName == "y") toks[k] = toString((*j)->y);
+						
+						if (vName == "hits") toks[k] = toString((*j)->hits());
+						if (vName == "maxHits") toks[k] = toString((*j)->maxHits());
+						if (vName == "mana") toks[k] = toString((*j)->mana());
+						if (vName == "maxMana") toks[k] = toString((*j)->maxMana());
+						if (vName == "strength") toks[k] = toString((*j)->strength());
+						if (vName == "constitution") toks[k] = toString((*j)->constitution());
+						if (vName == "intelligence") toks[k] = toString((*j)->intelligence());
+						if (vName == "wisdom") toks[k] = toString((*j)->wisdom());
+					}
+				}
+				
+				string q = "";//Expression
+				for (i = 0; i < toks.size(); i++) q += toks[i] + " ";//Adds token to expression
+			
+				if (atoi(expr(q, &ops_bool).c_str())) newQuery.units.push_back(*j);//Adds unit if matches expression
+			}
+			
+			c->queries.push_back(newQuery);//Adds query to campaign
+		}
+		}
+		
+		/*Units control*/{
+		if (tokens[0] == "giveControl" && tokens.size() >= 2){//Give control to player instruction
+			unit* u = c->m->getUnit_name(tokens[1]);//Gets unit
+			if (u) c->player.addUnit(u);//Gives unit to player
+		}
+		}
+		
+		/*Effects on units*/{
+		if (tokens[0] == "hits" && tokens.size() >= 3){//Vary hits instruction
+			unit* u = c->m->getUnit_name(tokens[1]);//Requested unit
+			if (u) u->varyHits(atoi(tokens[2].c_str()));//Varies hits
+		}
+		
+		if (tokens[0] == "mana" && tokens.size() >= 3){//Vary mana instruction
+			unit* u = c->m->getUnit_name(tokens[1]);//Requested unit
+			if (u) u->varyMana(atoi(tokens[2].c_str()));//Varies mana
+		}
+		
+		if (tokens[0] == "kill" && tokens.size() >= 2){//Kill instruction
+			unit* u = c->m->getUnit_name(tokens[1]);//Requested unit
+			if (u) u->kill();//Kills unit
+		}
+		}
+		
+		/*Story telling*/{
+		if (tokens[0] == "dialog" && tokens.size() >= 2){//Dialog instruction
+			c->dialogSeq.push_back(cmds[i].substr(cmds[i].find(tokens[1])));//Adds dialog
+			
+			if (c->dialogSeq.size() == 1)//If it was the first dialog
+				genDialogText(c->dialogSeq[0]);//Generates text
+		}
+		}
+		
+		/*Flow control*/{
+		if (tokens[0] == "if" && tokens.size() >= 2){//If statement
 			string s = "";//Expression
 			int j;//Counter
 			for (j = 1; j < tokens.size(); j++) s += tokens[j] + " ";//Adds each token to string
@@ -2658,22 +2954,18 @@ int script::exec(campaign* c){
 			string result = expr(s, &ops_bool);//Calculates expression
 			if (!atoi(result.c_str())) i++;//Skips next instruction if statement is false
 		}
+		}
 		
-		else if (tokens[0] == "return" && tokens.size() >= 2){//Return statement
+		/*Misc*/{
+		if (tokens[0] == "return" && tokens.size() >= 2){//Return statement
 			if (tokens[1] == "true") return TRUE;
 			else if (tokens[1] == "false") return FALSE;
 			else return VOID;
 		}
 		
-		else if (tokens[0] == "endSequence"){//End sequence instruction
+		if (tokens[0] == "endSequence"){//End sequence instruction
 			c->nextSeq();//Moves to next sequence
 		}
-		
-		else if (tokens[0] == "dialog" && tokens.size() >= 2){//Dialog instruction
-			c->dialogSeq.push_back(cmds[i].substr(cmds[i].find(tokens[1])));//Adds dialog
-			
-			if (c->dialogSeq.size() == 1)//If it was the first dialog
-				genDialogText(c->dialogSeq[0]);//Generates text
 		}
 	}
 	
@@ -2787,11 +3079,30 @@ void unit::nextFrame(){
 		if (anims.current()->curFrame == anims.current()->duration() - 1) stop();//Stops if reached end of animation
 		
 		if (anims.current()->curFrame == primary->strikeFrame && parent){//At half striking animation
+			applyEffect(primary->onStrike);//Applies effect
+			
 			switch (GETDIR(action)){//According to direction
 				case NORTH: parent->applyEffect(x, y - 1, primary->getEff(this), GETDIR(action)); break;
 				case WEST: parent->applyEffect(x - 1, y, primary->getEff(this), GETDIR(action)); break;
 				case SOUTH: parent->applyEffect(x, y + 1, primary->getEff(this), GETDIR(action)); break;
 				case EAST: parent->applyEffect(x + 1, y, primary->getEff(this), GETDIR(action)); break;
+			}
+		}
+	}
+	
+	else if (GETACT(action) == ACT_SPELL && spell){//If unit is casting spell
+		if (spell->imgGiven) spell->overlay.next();//Next frame for spell animation
+		
+		if (anims.current()->curFrame == anims.current()->duration() - 1) stop();//Stops if reached end of animation
+		
+		if (anims.current()->curFrame == spell->strikeFrame && parent){//At half striking animation
+			applyEffect(spell->onStrike);//Applies effect
+			
+			switch (GETDIR(action)){//According to direction
+				case NORTH: parent->applyEffect(x, y - 1, spell->getEff(this), GETDIR(action)); break;
+				case WEST: parent->applyEffect(x - 1, y, spell->getEff(this), GETDIR(action)); break;
+				case SOUTH: parent->applyEffect(x, y + 1, spell->getEff(this), GETDIR(action)); break;
+				case EAST: parent->applyEffect(x + 1, y, spell->getEff(this), GETDIR(action)); break;
 			}
 		}
 	}
@@ -2894,7 +3205,7 @@ void loadDatabase(object o){
 			damTypeDb.push_back(newDT);//Adds type to database
 		}
 		
-		if (i->type == OBJTYPE_WEAPON){//If object is a weapon
+		if (i->type == OBJTYPE_WEAPON || i->type == OBJTYPE_SPELL){//If object is a weapon
 			weapon newWeapon;//New weapon
 			newWeapon.fromScriptObj(*i);//Loads weapon
 			weaponDb.push_back(newWeapon);//Adds weapon to database
@@ -2971,6 +3282,10 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 	if (theme.getVar("bar_frame_offset_x")) bar_frame_offset.x = theme.getVar("bar_frame_offset_x")->intValue();//Gets bar frame offset x
 	if (theme.getVar("bar_frame_offset_y")) bar_frame_offset.y = theme.getVar("bar_frame_offset_y")->intValue();//Gets bar frame offset y
 	
+	if (theme.getVar("bar_xp_frame")) bar_xp_frame = CACHEDIMG(theme.getVar("bar_xp_frame")->value);//Gets xp bar frame
+	if (theme.getVar("bar_xp_frame_offset_x")) bar_xp_frame_offset.x = theme.getVar("bar_xp_frame_offset_x")->intValue();//Gets xp bar frame offset x
+	if (theme.getVar("bar_xp_frame_offset_y")) bar_xp_frame_offset.y = theme.getVar("bar_xp_frame_offset_y")->intValue();//Gets xp bar frame offset y
+	
 	if (theme.getVar("bar_hits")) bar_hits = CACHEDIMG(theme.getVar("bar_hits")->value);//Gets hitbar fill
 	if (theme.getVar("bar_hits_offset_x")) bar_hits_offset.x = theme.getVar("bar_hits_offset_x")->intValue();//Gets hitbar offset x
 	if (theme.getVar("bar_hits_offset_y")) bar_hits_offset.y = theme.getVar("bar_hits_offset_y")->intValue();//Gets hitbar offset y
@@ -2979,9 +3294,10 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 	if (theme.getVar("bar_mana_offset_x")) bar_mana_offset.x = theme.getVar("bar_mana_offset_x")->intValue();//Gets manabar offset x
 	if (theme.getVar("bar_mana_offset_y")) bar_mana_offset.y = theme.getVar("bar_mana_offset_y")->intValue();//Gets manabar offset y
 	
-	if (theme.getVar("infoPanel_img")) infoPanel_pict = CACHEDIMG(theme.getVar("infoPanel_img")->value);//Loads panel picture
-	if (theme.getVar("infoPanel_offset_x")) infoPanel.x = theme.getVar("infoPanel_offset_x")->intValue();//Gets panel offset x
-	if (theme.getVar("infoPanel_offset_y")) infoPanel.y = theme.getVar("infoPanel_offset_y")->intValue();//Gets panel offset x
+	if (theme.getVar("bar_xp")) bar_xp = CACHEDIMG(theme.getVar("bar_xp")->value);//Gets xp bar fill
+	if (theme.getVar("bar_xp_offset_x")) bar_xp_offset.x = theme.getVar("bar_xp_offset_x")->intValue();//Gets xp bar offset x
+	if (theme.getVar("bar_xp_offset_y")) bar_xp_offset.y = theme.getVar("bar_xp_offset_y")->intValue();//Gets xp bar offset y
+	
 	if (theme.getVar("infoPanel_col1")) infoPanel_col1 = strtol(theme.getVar("infoPanel_col1")->value.c_str(), NULL, 0);//Loads panel first color (name box)
 	if (theme.getVar("infoPanel_col2")) infoPanel_col2 = strtol(theme.getVar("infoPanel_col2")->value.c_str(), NULL, 0);//Loads panel second color (stats boxes)
 	if (theme.getVar("infoPanel_col3")) infoPanel_col3 = strtol(theme.getVar("infoPanel_col3")->value.c_str(), NULL, 0);//Loads panel third color (bonuses)
@@ -3000,6 +3316,8 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 	
 	if (theme.getVar("button_quit_released")) button_quit_released = CACHEDIMG(theme.getVar("button_quit_released")->value);//Loads released quit button picture
 	if (theme.getVar("button_quit_pressed")) button_quit_pressed = CACHEDIMG(theme.getVar("button_quit_pressed")->value);//Loads pressed quit button picture
+	
+	if (theme.getVar("midPanel_img")) midPanel_pict = CACHEDIMG(theme.getVar("midPanel_img")->value);//Loads mid panel picture
 	}
 	
 	/*Player info panel*/{
@@ -3043,9 +3361,13 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 	mpBox.x = infoPanel.w / 2 + 2;
 	infoPanel.controls.push_back(&mpBox);
 	
+	xpBox = hpBox;
+	xpBox.y += xpBox.h + 5;
+	infoPanel.controls.push_back(&xpBox);
+	
 	//Statistics text boxes
 	strBox.x = 5;
-	strBox.y = hpBox.y + hpBox.h + 10;
+	strBox.y = xpBox.y + xpBox.h + 10;
 	strBox.w = infoPanel.w / 2 - 7;
 	strBox.h = 15;
 	strBox.setAlpha(0);
@@ -3164,9 +3486,81 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 		inventoryPanel.controls.push_back(&legsBox);
 		
 		weaponBox = bodyBox;
-		weaponBox.x += slot_pict->h;
+		weaponBox.x += slot_pict->w;
+		weaponBox.y -= slot_pict->h / 2;
 		weaponBox.id = "15";
 		inventoryPanel.controls.push_back(&weaponBox);
+		
+		spellBox = weaponBox;
+		spellBox.y += slot_pict->h;
+		spellBox.id = "16";
+		inventoryPanel.controls.push_back(&spellBox);
+	}
+	
+	/*First level up panel*/{
+	hp_mp_levelUp.w = midPanel_pict->w;
+	hp_mp_levelUp.h = midPanel_pict->h;
+	hp_mp_levelUp.x = (window->w - hp_mp_levelUp.w) / 2;
+	hp_mp_levelUp.y = (window->h - hp_mp_levelUp.h) / 2;
+	hp_mp_levelUp.printMethod = midPanelPrint;
+	hp_mp_levelUp.setClickArea();
+	
+	hpUp = btn_use;
+	hpUp.text = "hits +5";
+	hpUp.x = (hp_mp_levelUp.w - hpUp.w) / 2;
+	hpUp.y = hp_mp_levelUp.h / 2 - hpUp.h;
+	hp_mp_levelUp.controls.push_back(&hpUp);
+	
+	mpUp = hpUp;
+	mpUp.text = "mana +5";
+	mpUp.y += mpUp.h;
+	hp_mp_levelUp.controls.push_back(&mpUp);
+	
+	hpUp.addHandler_click(hpUp_click);
+	mpUp.addHandler_click(mpUp_click);
+	
+	levelUp_caption.w = hp_mp_levelUp.w;
+	levelUp_caption.h = hp_mp_levelUp.h;
+	levelUp_caption.x = (hp_mp_levelUp.w - levelUp_caption.w) / 2;
+	levelUp_caption.y = 10;
+	levelUp_caption.text = "LEVEL UP!";
+	levelUp_caption.foreColor = infoPanel_col1;
+	levelUp_caption.font = panelFont_major;
+	levelUp_caption.setAlpha(0);
+	levelUp_caption.textAlign = CENTER;
+	hp_mp_levelUp.controls.push_back(&levelUp_caption);
+	}
+	
+	/*Second level up panel*/{
+	stats_levelUp = hp_mp_levelUp;
+	stats_levelUp.controls.clear();
+	
+	strUp = hpUp;
+	strUp.x -= strUp.w / 2;
+	strUp.text = "str +1";
+	stats_levelUp.controls.push_back(&strUp);
+	
+	conUp = strUp;
+	conUp.y += conUp.h;
+	conUp.text = "con +1";
+	stats_levelUp.controls.push_back(&conUp);
+	
+	intUp = strUp;
+	intUp.x += intUp.w;
+	intUp.text = "int +1";
+	stats_levelUp.controls.push_back(&intUp);
+	
+	wisUp = intUp;
+	wisUp.y += wisUp.h;
+	wisUp.text = "wis +1";
+	stats_levelUp.controls.push_back(&wisUp);
+	
+	strUp.addHandler_click(strUp_click);
+	conUp.addHandler_click(conUp_click);
+	intUp.addHandler_click(intUp_click);
+	wisUp.addHandler_click(wisUp_click);
+	
+	stats_levelUp.controls.push_back(&levelUp_caption);
 	}
 	
 	/*Sets operators*/{

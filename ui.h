@@ -53,6 +53,7 @@ typedef struct {string oldText; string newText;} typeEvent;//Text type event dat
 
 typedef enum {VISIBLE, MINIMIZED, HIDDEN, PRESSED} cStatus;//Panel status enumeration
 typedef enum {CENTERED, STRETCHED, TOPLEFT} imgStyle;//Image style enumeration
+typedef enum {CENTER, LEFT, RIGHT} alignment;//Alignment enumeration
 
 //Initialization function
 int uiInit(){
@@ -519,6 +520,7 @@ class textBox: public control{
 	TTF_Font* font;//Text box font
 	Uint32 foreColor;//Text color
 	bool edit;//Enable text editing
+	alignment textAlign;//Text alignment
 	
 	//Constructor
 	textBox(){
@@ -527,6 +529,7 @@ class textBox: public control{
 		edit = false;
 		font = NULL;
 		foreColor = 0x000000;
+		textAlign = LEFT;
 		
 		lockPosition = true;
 		
@@ -850,7 +853,12 @@ void textBox_print_default(SDL_Surface* target, textBox* e){
 	
 	if ((e->text != "" || e->isFocused()) && e->font){//If there are valid text and font
 		SDL_Surface* text = RENDERTEXT(e->font, (e->text + (e->isFocused() && e->edit ? "|" : "")).c_str(), e->getForeColor());//Text
-		SDL_Rect offset = {e->x + 5, e->y + 5};//Offset rectangle
+		SDL_Rect offset;//Offset rectangle
+		
+		if (e->textAlign == LEFT) offset = {e->x + 5, e->y + 5};
+		else if (e->textAlign == RIGHT) offset = {e->x + e->w - text->w, e->y + 5};
+		else if (e->textAlign == CENTER) offset = {e->x + (e->w - text->w) / 2, e->y + 5};
+		
 		SDL_BlitSurface(text, NULL, target, &offset);//Prints text
 		SDL_FreeSurface(text);//Frees text
 	}
