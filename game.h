@@ -128,6 +128,15 @@ int tilesSide = 32;//Side of each tile of the map
 deque<op> ops_bool;//Boolean script operators
 deque<op> ops_int;//Intger script operators
 
+//Game status
+bool running = true;
+
+//Game phases
+#define MAIN_MENU			0
+#define GAME_PHASE			1
+
+int gamePhase = MAIN_MENU;//Game phase
+
 //Settings
 //[nothing yet]
 
@@ -141,10 +150,18 @@ TTF_Font* dialogFont = NULL;//Font for dialogs
 //Global graphics: buttons
 SDL_Surface* button_released = NULL;//Released button image
 SDL_Surface* button_pressed = NULL;//Pressed button image
+SDL_Surface* button_big_released = NULL;//Released button image
+SDL_Surface* button_big_pressed = NULL;//Pressed button image
 SDL_Surface* button_quit_released = NULL;//Released quit button image
 SDL_Surface* button_quit_pressed = NULL;//Pressed quit button image
 
-//User interface data - game HUD
+//User interface data
+//Main menu
+button btn_newGame;//New game button
+button btn_loadGame;//Load game button
+button btn_quitMenu;//Quit button
+
+//Game HUD
 SDL_Surface* bar_frame = NULL;//Frame for hit and mana bars
 SDL_Rect bar_frame_offset = {0, 0};//Frame offset
 
@@ -209,6 +226,7 @@ Uint32 infoPanel_col3 = 0x000000;//Color for bonuses in info panel
 Uint32 infoPanel_col4 = 0x000000;//Color for maluses in info panel
 
 Uint32 buttons_col = 0x000000;//Color for buttons
+Uint32 buttons_big_col = 0x000000;//Color for big buttons
 
 Uint32 dialog_col = 0xFFFFFF;//Color for dialog boxes
 
@@ -321,6 +339,27 @@ void buttonPrint(SDL_Surface* target, control* p){
 		
 	else if (e->getStatus() == PRESSED)//Button pressed
 		SDL_BlitSurface(button_pressed, NULL, target, &offset);//Prints pressed button
+	
+	//Prints text
+	if (e->text != "" && e->font){//If there are valid text and font
+		SDL_Surface* txt = TTF_RenderText_Blended(e->font, e->text.c_str(), e->getForeColor());//Renders text
+		SDL_Rect o {e->x + e->w / 2 - txt->w / 2, e->y + 5};//Offset rectangle
+		SDL_BlitSurface(txt, NULL, target, &o);//Blits text
+		SDL_FreeSurface(txt);//Frees text
+	}
+}
+
+//Big button printing function
+void bigButtonPrint(SDL_Surface* target, control* p){
+	button* e = (button*) p;//Converts to button
+	
+	SDL_Rect offset = {e->x, e->y};//Offset rectangle
+	
+	if (e->getStatus() == VISIBLE)//Normal status
+		SDL_BlitSurface(button_big_released, NULL, target, &offset);//Prints released button
+		
+	else if (e->getStatus() == PRESSED)//Button pressed
+		SDL_BlitSurface(button_big_pressed, NULL, target, &offset);//Prints pressed button
 	
 	//Prints text
 	if (e->text != "" && e->font){//If there are valid text and font
@@ -2628,16 +2667,19 @@ void btn_use_click(control* p, mouseEvent ev){
 			if (c->type == CLOTH_HEAD && !current.player.units[0]->head){//If it's head clothing and player head is free
 				current.player.units[0]->head = c;//Sets head
 				current.player.units[0]->inv[slot_selected] = NULL;//Removes from inventory
+				current.player.units[0]->head->overlay.setAnim(current.player.units[0]->anims.current()->id);//Sets anim
 			}
 			
 			if (c->type == CLOTH_BODY && !current.player.units[0]->body){//If it's body clothing and player body is free
 				current.player.units[0]->body = c;//Sets body
 				current.player.units[0]->inv[slot_selected] = NULL;//Removes from inventory
+				current.player.units[0]->body->overlay.setAnim(current.player.units[0]->anims.current()->id);//Sets anim
 			}
 			
 			if (c->type == CLOTH_LEGS && !current.player.units[0]->legs){//If it's legs clothing and player legs are free
 				current.player.units[0]->legs = c;//Sets legs
 				current.player.units[0]->inv[slot_selected] = NULL;//Removes from inventory
+				current.player.units[0]->legs->overlay.setAnim(current.player.units[0]->anims.current()->id);//Sets anim
 			}
 		}
 	}
@@ -3176,6 +3218,24 @@ bool controller::AI(){
 	}
 }
 
+//Function to set campaign
+void setCampaign(string id){
+	if (get(&campaignDb, "tutorial")){
+		current = *get(&campaignDb, "tutorial");
+		current.setup();
+	}
+}
+
+//New game click event handler
+void btn_newGame_click(control* p, mouseEvent ev){
+	gamePhase = GAME_PHASE;
+}
+
+//Quit click event handler
+void btn_quitMenu_click(control* p, mouseEvent ev){
+	running = false;
+}
+
 //Function to load database from object
 void loadDatabase(object o){
 	deque<object>::iterator i;//Iterator
@@ -3314,10 +3374,37 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 	if (theme.getVar("button_pressed")) button_pressed = CACHEDIMG(theme.getVar("button_pressed")->value);//Loads pressed button picture
 	if (theme.getVar("button_col")) buttons_col = strtol(theme.getVar("button_col")->value.c_str(), NULL, 0);//Loads panel color
 	
+	if (theme.getVar("button_big_released")) button_big_released = CACHEDIMG(theme.getVar("button_big_released")->value);//Loads released button picture
+	if (theme.getVar("button_big_pressed")) button_big_pressed = CACHEDIMG(theme.getVar("button_big_pressed")->value);//Loads pressed button picture
+	if (theme.getVar("button_big_col")) buttons_big_col = strtol(theme.getVar("button_big_col")->value.c_str(), NULL, 0);//Loads panel color
+	
 	if (theme.getVar("button_quit_released")) button_quit_released = CACHEDIMG(theme.getVar("button_quit_released")->value);//Loads released quit button picture
 	if (theme.getVar("button_quit_pressed")) button_quit_pressed = CACHEDIMG(theme.getVar("button_quit_pressed")->value);//Loads pressed quit button picture
 	
 	if (theme.getVar("midPanel_img")) midPanel_pict = CACHEDIMG(theme.getVar("midPanel_img")->value);//Loads mid panel picture
+	}
+	
+	/*Main menu*/{
+	btn_newGame.w = button_big_released->w;
+	btn_newGame.h = button_big_released->h;
+	btn_newGame.x = (window->w - btn_newGame.w) / 2;
+	btn_newGame.y = (window->h - 4 * (btn_newGame.h + 5)) / 2;
+	btn_newGame.foreColor = buttons_big_col;
+	btn_newGame.font = panelFont_major;
+	btn_newGame.text = "New game";
+	btn_newGame.printMethod = bigButtonPrint;
+	btn_newGame.setClickArea();
+	
+	btn_loadGame = btn_newGame;
+	btn_loadGame.y += btn_loadGame.h + 5;
+	btn_loadGame.text = "Load game";
+	
+	btn_quitMenu = btn_loadGame;
+	btn_quitMenu.y += 2 * (btn_quitMenu.h + 5);
+	btn_quitMenu.text = "Quit";
+	
+	btn_newGame.addHandler_click(btn_newGame_click);
+	btn_quitMenu.addHandler_click(btn_quitMenu_click);
 	}
 	
 	/*Player info panel*/{

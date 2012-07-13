@@ -7,18 +7,34 @@ int lfb = 0;
 int fps = 40;
 
 int main(int argc, char* argv[]){
-	bool running = true;
 	bool input = true;
 	SDL_Event e;
 	
 	game_init("data\\cfg\\db.cfg", "data\\cfg\\settings.cfg", "data\\cfg\\theme.cfg");
 	
-	current = *get(&campaignDb, "tutorial");
-	current.setup();
+	while (running && gamePhase == MAIN_MENU) {
+		while (SDL_PollEvent(&e)){
+			if (e.type == SDL_QUIT) running = false;
+			
+			btn_newGame.checkEvents(e);
+			btn_loadGame.checkEvents(e);
+			btn_quitMenu.checkEvents(e);
+		}
+		
+		SDL_FillRect(window, &window->clip_rect, 0);
+		
+		btn_newGame.print(window);
+		btn_loadGame.print(window);
+		btn_quitMenu.print(window);
+		
+		SDL_Flip(window);
+	}
+	
+	setCampaign("tutorial");
 
 	int curFps = 1;
 	
-	while (running){
+	while (running && gamePhase == GAME_PHASE){
 		lfb = SDL_GetTicks();
 		
 		while (SDL_PollEvent(&e)){
@@ -57,8 +73,8 @@ int main(int argc, char* argv[]){
 		
 		SDL_Flip(window);
 		
-		current.nextFrame();
 		if (input) current.turnMoves();
+		current.nextFrame();
 		input = !input;
 		
 		curFps = 1000 / (SDL_GetTicks() - lfb);
