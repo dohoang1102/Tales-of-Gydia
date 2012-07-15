@@ -109,13 +109,14 @@ int DB_VARIABLEWARNING		= getErrorCode();//Non-lethal variable error in database
 #define INVENTORY			2//Inventory view
 #define LEVELUP_1			3//Level up view
 #define LEVELUP_2			4//Level up view
+#define QUEST				5//Quest info view
 
 //Game calculations: damage, mana costs, ...
 #define MINDAMAGE							-1//Minimum damage that can be taken (if calculates lower damage, replaced with this value)
 #define CALC_DAMAGEDEALT(BASE, STAT)		((BASE) * (1 + STAT / 100))//Dealt damage calculation: [base weapon damage] * [strength/intelligence] / 10 - this means: strength = 1 => 10% damage bonus on weapons
 #define CALC_DAMAGETAKEN(BASE, STAT, MULT)	((BASE) * ((MULT) - (STAT) / 100) >= MINDAMAGE ? MINDAMAGE : ceil((BASE) * ((MULT) - (STAT) / 100)))//Damage taken calculation: [base damage] * [resistance multiplier reduced of stat/100]
 #define CALC_RECOVERY(STAT1, STAT2)			((STAT1) * (STAT2) > 100 ? (STAT1) * (STAT2) / 100 : 1)//Recovery calculation
-#define CALC_REQUIREDXP(LEVEL)				((LEVEL) * (LEVEL) * 5)//Required xp calculation
+#define CALC_REQUIREDXP(LEVEL)				((LEVEL) * (LEVEL) * 8)//Required xp calculation
 
 class unit;//Unit class prototype
 class map;//Map class prototype
@@ -138,7 +139,10 @@ bool running = true;
 int gamePhase = MAIN_MENU;//Game phase
 
 //Settings
-//[nothing yet]
+//Localization
+list <loc> locales;//Installed locales
+string curLoc = "";//Current locale
+string getText(string);//Get text function prototype
 
 //User interface
 //Fonts
@@ -157,6 +161,8 @@ SDL_Surface* button_quit_pressed = NULL;//Pressed quit button image
 
 //User interface data
 //Main menu
+SDL_Surface* title_image = NULL;//Title image
+
 button btn_newGame;//New game button
 button btn_loadGame;//Load game button
 button btn_quitMenu;//Quit button
@@ -179,7 +185,6 @@ SDL_Rect bar_xp_offset = {0, 0};//Xp fill offset
 
 //Dialogs
 SDL_Surface* dialog_pict = NULL;//Dialog box picture
-SDL_Surface* dialog_text = NULL;//Dialog text picture
 textBox dialogBox;//Dialog box
 
 //Windows: global
@@ -190,6 +195,7 @@ SDL_Surface* bigPanel_pict = NULL;//Big panel picture
 panel inventoryPanel;//Inventory panel
 imageBox inv_slots [12];//Inventory slots boxes
 imageBox headBox, bodyBox, legsBox, weaponBox, spellBox;//Equipped stuff boxes
+textBox itemInfoBox;//Info about selected item
 
 SDL_Surface* slot_pict = NULL;//Slot box picture
 SDL_Surface* slot_pict_focus = NULL;//Focused slot box picture
@@ -216,8 +222,14 @@ textBox levelUp_caption;//Level up caption
 panel hp_mp_levelUp;//First level up panel
 button hpUp, mpUp;//Hits and mana buttons
 
+//Level up 2: stats
 panel stats_levelUp;//Stat level up panel
 button strUp, conUp, intUp, wisUp;//Stats buttons
+
+//Windows: quest info
+panel questPanel;//Quest info panel
+textBox questNameBox;//Quest name text box
+textBox questInfoBox;//Quest info text box
 
 //Colors
 Uint32 infoPanel_col1 = 0x000000;//Color for main stuff in info panel
@@ -290,10 +302,46 @@ void dialogPrint(SDL_Surface* target, control* p){
 	SDL_Rect offset = {e->x, e->y};//Offet rectangle
 	SDL_BlitSurface(dialog_pict, NULL, target, &offset);//Prints dialog picture
 	
-	if (dialog_text){//If there's a text to print
-		offset.x = e->x + (e->w - dialog_text->w) / 2;
-		offset.y = e->y + (e->h - dialog_text->h) / 2;
-		SDL_BlitSurface(dialog_text, NULL, target, &offset);//Prints text
+	if (dialogBox.text != "" && dialogBox.font){//If there's a text to print
+		string curLine = "";//Current line
+			int w = 0;//Text width
+			int i = 0;//Counter
+			int curY = e->y + 35;//Current y coord
+			deque<string> tokens = tokenize(e->text + (e->isFocused() && e->edit ? "|" : ""), " \t");//Text tokens
+			
+			
+			while (i < tokens.size()){//While the line is not long enough
+				TTF_SizeText(e->font, (curLine + tokens[i] + " ").c_str(), &w, NULL);//Calcs width
+				
+				if (w <= e->w - 10) curLine += tokens[i] + " ";//Adds token if there's still space
+				else {//Else
+					SDL_Surface* text = RENDERTEXT(e->font, curLine.c_str(), e->getForeColor());//Renders line
+					SDL_Rect offset;//Offset rectangle
+			
+					if (e->textAlign == LEFT) offset = {e->x + 5, curY};
+					else if (e->textAlign == RIGHT) offset = {e->x + e->w - text->w, curY};
+					else if (e->textAlign == CENTER) offset = {e->x + (e->w - text->w) / 2, curY};
+					
+					SDL_BlitSurface(text, NULL, target, &offset);//Prints text
+					SDL_FreeSurface(text);//Frees text
+					
+					curY += TTF_FontHeight(e->font) + 1;//Caret down
+					curLine = "";//Resets line
+				}
+				
+				i++;//Next token
+			}
+			
+			//Prints last line
+			SDL_Surface* text = RENDERTEXT(e->font, curLine.c_str(), e->getForeColor());//Renders line
+			SDL_Rect offset;//Offset rectangle
+	
+			if (e->textAlign == LEFT) offset = {e->x + 5, curY};
+			else if (e->textAlign == RIGHT) offset = {e->x + e->w - text->w, curY};
+			else if (e->textAlign == CENTER) offset = {e->x + (e->w - text->w) / 2, curY};
+			
+			SDL_BlitSurface(text, NULL, target, &offset);//Prints text
+			SDL_FreeSurface(text);//Frees text
 	}
 }
 
@@ -370,13 +418,6 @@ void bigButtonPrint(SDL_Surface* target, control* p){
 	}
 }
 
-//Function to generate dialog text picture
-void genDialogText(string s){
-	if (s == "" || !dialogFont) return;//Exits function if there's no text or no font
-	if (dialog_text) SDL_FreeSurface(dialog_text);//Frees old surface
-	dialog_text = TTF_RenderText_Blended(dialogFont, s.c_str(), SDL_Color {(dialog_col & 0xFF0000) >> 16, (dialog_col & 0x00FF00) >> 8, dialog_col & 0xFF});//Generates new text
-}
-
 //Function to convert direction in string
 string dirToString (int dir){
 	switch (dir){
@@ -391,6 +432,7 @@ string dirToString (int dir){
 class content{
 	public:
 	string id;
+	string shownName;
 	string author;
 	string description;
 	
@@ -405,12 +447,13 @@ class content{
 		//Function to load from script object
 		void fromScriptObj(object o){
 			id = o.name;
+			shownName = getText(id);
 			
 			var* author = o.getVar("author");
 			var* description = o.getVar("description");
 			
 			if (author) this->author = author->value;
-			if (description) this->description = description->value;
+			if (description) this->description = getText(description->value);
 		}
 	#endif
 };
@@ -457,6 +500,14 @@ template <class contentType> contentType* get_ptr(deque<contentType*> *source, s
 		
 	if (errFunc) errFunc(CONTENT_INVALIDIDERROR, "Content " + id + " not found in content list");//Error message	
 	return NULL;//Returns a null pointer if no element was found
+}
+
+//Get text function
+string getText(string id){
+	loc *main = get(&locales, curLoc);//Current locale
+	
+	if (main) return main->getText(id);//Returns text if found
+	else return id;//Else returns required id
 }
 
 //Decoration class
@@ -1034,6 +1085,7 @@ class unit: public content{
 		if (legs) legs->print(target, x + dX, y + dY);
 		
 		if (GETACT(action) == ACT_STRIKE && primary) primary->print(target, x + dX, y + dY);//Prints weapon
+		if (GETACT(action) == ACT_SPELL && spell) spell->print(target, x + dX, y + dY);//Prints spell
 		
 		//Prints effect icons
 		list<effect>::iterator e;//Effect iterator
@@ -2155,8 +2207,9 @@ class map: public content{
 	unit* getUnit_name(string name){
 		deque<unit*>::iterator i;//Unit iterator
 		
-		for (i = units.begin(); i != units.end(); i++)//For each unit
+		for (i = units.begin(); i != units.end(); i++){//For each unit
 			if ((*i)->name == name) return *i;//Returns unit if name is matching
+		}
 			
 		return NULL;//Returns null if no unit was found
 	}
@@ -2272,7 +2325,7 @@ class sequence: public content{
 			if (i->control.exec(parent) == TRUE){//If control script is verified
 				i->action.exec(parent);//Triggers action event
 				
-				if (i->flags & EVENT_ONCE) i = events.erase(i);//Erases event if has to be triggered only once
+				if (i->flags & EVENT_ONCE){ i = events.erase(i); i--; }//Erases event if has to be triggered only once
 			}
 		}
 	}
@@ -2318,6 +2371,8 @@ class campaign: public content{
 	deque<string> dialogSeq;//Current dialog sequence
 	
 	int view;//Current view
+	
+	string questName, questInfo;//Quest name and information strings
 	
 	//Constructor
 	campaign(){
@@ -2411,6 +2466,7 @@ class campaign: public content{
 		
 		//Dialogs
 		if (dialogSeq.size() > 0){//If needs to show dialog
+			dialogBox.text = dialogSeq[0];
 			dialogBox.print(target);
 		}
 		
@@ -2435,6 +2491,12 @@ class campaign: public content{
 		if (view == LEVELUP_2){
 			stats_levelUp.print(target);//Prints levelup panel
 		}
+		
+		//Quest info
+		if (view == QUEST){
+			updateQuestPanel();//Updates quests panel
+			questPanel.print(target);//Prints quests panel
+		}
 	}
 	
 	//Next sequence function
@@ -2449,7 +2511,7 @@ class campaign: public content{
 	
 	//Next frame function
 	void nextFrame(){
-		if (m) m->nextFrame();//Goes to map next frame if possible
+		if (m && view == GAME) m->nextFrame();//Goes to map next frame if possible
 	}
 	
 	//Turn moves function
@@ -2501,8 +2563,6 @@ class campaign: public content{
 	void nextDialog(){
 		if (dialogSeq.size() > 0){//If there are still dialogs
 			dialogSeq.pop_front();//Removes first dialog text
-			
-			if (dialogSeq.size() > 0) genDialogText(dialogSeq[0]);//Generates next dialog text
 		}
 	}
 	
@@ -2594,11 +2654,51 @@ class campaign: public content{
 				else if (i) btn_use.text = "equip";
 			}
 			
-			else if (slot_selected != -1 && slot_selected < 16)
+			else if (slot_selected != -1 && slot_selected < 17)
 				btn_use.text = "unequip";
 			
 			else btn_use.text = "use";
+			
+			//Sets info box
+			if (slot_selected != -1){//If there's a selected item
+				item* it = NULL;//Selected item
+				if (slot_selected < 12) it = player.units[0]->inv[slot_selected];
+				else switch (slot_selected){
+					case 12: it = player.units[0]->head; break;
+					case 13: it = player.units[0]->body; break;
+					case 14: it = player.units[0]->legs; break;
+					case 15: it = player.units[0]->primary; break;
+					case 16: it = player.units[0]->spell; break;
+				}
+				
+				if (it && it->shownName != "" || it->description != ""){
+					string typeString;
+					switch (it->itemType){
+						case DISPOSABLE: typeString = getText("item"); break;
+						case WEAPON: typeString = getText("weapon"); break;
+						case SPELL: typeString = getText("spell"); break;
+						case CLOTHING:
+							cloth* c = (cloth*) it;
+							if (c->type == CLOTH_HEAD) typeString = getText("head");
+							else if (c->type == CLOTH_BODY) typeString = getText("body");
+							else if (c->type == CLOTH_LEGS) typeString = getText("legs");
+							break;
+					}
+					
+					itemInfoBox.text = it->shownName + " (" + typeString + ") \\n " + it->description;
+				}
+					
+				else itemInfoBox.text = getText("noInfoAvailable");
+			}
+			
+			else itemInfoBox.text = getText("noItemSelected");
 		}
+	}
+	
+	//Function to update quest panel
+	void updateQuestPanel(){
+		questNameBox.text = "Current quest: " + questName;
+		questInfoBox.text = questInfo;
 	}
 	
 	//Function to check events
@@ -2607,32 +2707,7 @@ class campaign: public content{
 		else if (view == INVENTORY) inventoryPanel.checkEvents(e);
 		else if (view == LEVELUP_1) hp_mp_levelUp.checkEvents(e);
 		else if (view == LEVELUP_2) stats_levelUp.checkEvents(e);
-	}
-	
-	//Function to get a deque of campaign variables
-	deque<var> getVars(){
-		deque<var> result;//Result
-		
-		if (player.units.size() > 0){
-			var pId ("player.id", player.units[0]->id);
-			var pName ("player.name", player.units[0]->name);
-			var pX ("player.x", player.units[0]->x);
-			var pY ("player.y", player.units[0]->y);
-			
-			result.push_back(pId);
-			result.push_back(pName);
-			result.push_back(pX);
-			result.push_back(pY);
-		}
-		
-		deque<uQuery>::iterator i;//Query iterator
-		for (i = queries.begin(); i != queries.end(); i++){//For each query
-			var qCount (i->id + ".count", i->units.size());
-			
-			result.push_back(qCount);
-		}
-		
-		return result;//Returns result
+		else if (view == QUEST) questPanel.checkEvents(e);
 	}
 } current;
 
@@ -2809,19 +2884,63 @@ int script::exec(campaign* c){
 	int i;//Counter
 	int result = VOID;//Script result (false on errors)
 	
-	deque<var> vars = c->getVars();//Generates campaign variables
-		
+	deque<var> vars;//Known variables
+	
 	for (i = 0; i < cmds.size(); i++){//For each instruction		
 		deque<string> tokens = tokenize(cmds[i], "\t ");
 		
+		/*Variable substitution*/
 		int j;//Counter
 		for (j = 0; j < tokens.size(); j++){//For each token
 			if (tokens[j][0] == '$'){//If token is a variable
-				int k;//Counter
-				for (k = 0; k < vars.size(); k++){//For each variable
-					if (vars[k].name == tokens[j].substr(1)){//If variable is matching
-						tokens[j] = vars[k].value;//Replaces token with variable value
-						break;//Ends loop
+				//Player info variables [to expand]
+				if (tokens[j] == "$player.name") tokens[j] = c->player.units[0]->name;
+				else if (tokens[j] == "$player.id") tokens[j] = c->player.units[0]->id;
+				
+				else if (tokens[j] == "$player.x") tokens[j] = toString(c->player.units[0]->x);
+				else if (tokens[j] == "$player.y") tokens[j] = toString(c->player.units[0]->y);
+				
+				else if (tokens[j] == "$player.hits") tokens[j] = toString(c->player.units[0]->hits());
+				if (tokens[j] == "$player.maxHits") tokens[j] = toString(c->player.units[0]->maxHits());
+				if (tokens[j] == "$player.mana") tokens[j] = toString(c->player.units[0]->mana());
+				if (tokens[j] == "$player.maxMana") tokens[j] = toString(c->player.units[0]->maxMana());
+				if (tokens[j] == "$player.strength") tokens[j] = toString(c->player.units[0]->strength());
+				if (tokens[j] == "$player.constitution") tokens[j] = toString(c->player.units[0]->constitution());
+				if (tokens[j] == "$player.intelligence") tokens[j] = toString(c->player.units[0]->intelligence());
+				if (tokens[j] == "$player.wisdom") tokens[j] = toString(c->player.units[0]->wisdom());
+				
+				//Query info variables [to expand]
+				else if (tokens[j].substr(0, 7) == "$query."){//If variable is related to query
+					string qName = tokens[j].substr(7, tokens[j].find(".", 7) - 7);//Query name
+					string vName = tokens[j].substr(7 + qName.size() + 1);//Variable name
+					
+					uQuery *q = get(&c->queries, qName);//Requested query
+					if (q){//If query was found
+						if (vName == "count") tokens[j] = toString(q->units.size());//Query count
+					}
+				}
+				
+				//Unit info variable [to expand]
+				else if (tokens[j].substr(0, 6) == "$unit."){//If variable is related to unit
+					string uName = tokens[j].substr(6, tokens[j].find(".", 6) - 6);//Unit name
+					string vName = tokens[j].substr(6 + uName.size() + 1);//Variable name
+					
+					unit* u = c->m->getUnit_name(uName);//Requested unit
+					if (u){//If unit was found
+						if (vName == "name") tokens[j] = u->name;
+						else if (vName == "id") tokens[j] = u->id;
+						
+						else if (vName == "x") tokens[j] = toString(u->x);
+						else if (vName == "y") tokens[j] = toString(u->y);
+						
+						else if (vName == "hits") tokens[j] = toString(u->hits());
+						if (vName == "maxHits") tokens[j] = toString(u->maxHits());
+						if (vName == "mana") tokens[j] = toString(u->mana());
+						if (vName == "maxMana") tokens[j] = toString(u->maxMana());
+						if (vName == "strength") tokens[j] = toString(u->strength());
+						if (vName == "constitution") tokens[j] = toString(u->constitution());
+						if (vName == "intelligence") tokens[j] = toString(u->intelligence());
+						if (vName == "wisdom") tokens[j] = toString(u->wisdom());
 					}
 				}
 			}
@@ -2952,6 +3071,13 @@ int script::exec(campaign* c){
 			
 			c->queries.push_back(newQuery);//Adds query to campaign
 		}
+		
+		if (tokens[0] == "addToQuery" && tokens.size() >= 3){
+			uQuery* q = get(&c->queries, tokens[1]);//Requested query
+			unit* u = c->m->getUnit_name(tokens[2]);//Requested unit
+			
+			if (q && u) q->units.push_back(u);//Adds unit to query
+		}
 		}
 		
 		/*Units control*/{
@@ -2980,10 +3106,17 @@ int script::exec(campaign* c){
 		
 		/*Story telling*/{
 		if (tokens[0] == "dialog" && tokens.size() >= 2){//Dialog instruction
-			c->dialogSeq.push_back(cmds[i].substr(cmds[i].find(tokens[1])));//Adds dialog
-			
-			if (c->dialogSeq.size() == 1)//If it was the first dialog
-				genDialogText(c->dialogSeq[0]);//Generates text
+			c->dialogSeq.push_back(getText(tokens[1]));//Adds dialog
+		}
+		}
+		
+		/*Quests*/{
+		if (tokens[0] == "questName" && tokens.size() >= 2){//Quest name command
+			c->questName = getText(tokens[1]);
+		}
+		
+		if (tokens[0] == "questInfo" && tokens.size() >= 2){//Quest info command
+			c->questInfo = getText(tokens[1]);
 		}
 		}
 		
@@ -3300,6 +3433,15 @@ void loadDatabase(object o){
 			newItem.fromScriptObj(*i);//Loads item
 			itemDb.push_back(newItem);//Adds item to database
 		}
+		
+		if (i->type == OBJTYPE_LOCALE){//If object is a localization
+			loc newLoc;//New locale
+			newLoc.fromScriptObj(*i);//Loads locale
+			
+			if (!get(&locales, i->name))//If locale doesn't exist yet
+				locales.push_back(newLoc);//Adds locale to database
+			else *get(&locales, i->name) += newLoc;//Else adds locale to previous
+		}
 	}
 	
 	cout << "Loaded successfully!" << endl;
@@ -3317,16 +3459,16 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 	initWindow(1000, 600, "Tales of Gydia");//Window setup
 	}
 	
-	/*Loads game database*/{
-	fileData f (dbFile);//File data for database
-	loadDatabase(f.objGen("db"));//Loads database
-	}
-	
 	/*Loads game settings*/{
 	fileData s (settingsFile);//Settings file
 	object settings = s.objGen("settings");//Loads settings
 	
-	//[no settings yet!]
+	if (settings.getVar("locale")) curLoc = settings.getVar("locale")->value;//Gets locale variable
+	}
+	
+	/*Loads game database*/{
+	fileData f (dbFile);//File data for database
+	loadDatabase(f.objGen("db"));//Loads database
 	}
 	
 	/*Loads game interface data*/{
@@ -3382,6 +3524,8 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 	if (theme.getVar("button_quit_pressed")) button_quit_pressed = CACHEDIMG(theme.getVar("button_quit_pressed")->value);//Loads pressed quit button picture
 	
 	if (theme.getVar("midPanel_img")) midPanel_pict = CACHEDIMG(theme.getVar("midPanel_img")->value);//Loads mid panel picture
+	
+	if (theme.getVar("title_img")) title_image = CACHEDIMG(theme.getVar("title_img")->value);//Loads title image
 	}
 	
 	/*Main menu*/{
@@ -3390,18 +3534,18 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 	btn_newGame.x = (window->w - btn_newGame.w) / 2;
 	btn_newGame.y = (window->h - 4 * (btn_newGame.h + 5)) / 2;
 	btn_newGame.foreColor = buttons_big_col;
-	btn_newGame.font = panelFont_major;
-	btn_newGame.text = "New game";
+	btn_newGame.font = panelFont_minor;
+	btn_newGame.text = getText("newGame");
 	btn_newGame.printMethod = bigButtonPrint;
 	btn_newGame.setClickArea();
 	
 	btn_loadGame = btn_newGame;
 	btn_loadGame.y += btn_loadGame.h + 5;
-	btn_loadGame.text = "Load game";
+	btn_loadGame.text = getText("loadGame");
 	
 	btn_quitMenu = btn_loadGame;
 	btn_quitMenu.y += 2 * (btn_quitMenu.h + 5);
-	btn_quitMenu.text = "Quit";
+	btn_quitMenu.text = getText("quit");
 	
 	btn_newGame.addHandler_click(btn_newGame_click);
 	btn_quitMenu.addHandler_click(btn_quitMenu_click);
@@ -3504,6 +3648,9 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 	dialogBox.w = dialog_pict->w;
 	dialogBox.h = dialog_pict->h;
 	dialogBox.printMethod = dialogPrint;
+	dialogBox.font = panelFont_minor;
+	dialogBox.foreColor = infoPanel_col1;
+	dialogBox.textAlign = CENTER;
 	}
 	
 	/*Inventory screen*/{
@@ -3517,7 +3664,7 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 		inventoryPanel.controls.push_back(&btn_quit);
 		
 		btn_use.x = 10 + 4 * slot_pict->w + (bigPanel_pict->w - 10 - 4 * slot_pict->w - button_released->w) / 2;
-		btn_use.y = 10 + 3 * slot_pict->h + 15;
+		btn_use.y = 10 + 3 * slot_pict->h;
 		btn_use.w = button_released->w;
 		btn_use.h = button_released->h;
 		btn_use.setClickArea();
@@ -3582,6 +3729,15 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 		spellBox.y += slot_pict->h;
 		spellBox.id = "16";
 		inventoryPanel.controls.push_back(&spellBox);
+		
+		itemInfoBox.x = 10;
+		itemInfoBox.y = btn_use.y;
+		itemInfoBox.w = btn_use.x - 20;
+		itemInfoBox.h = inventoryPanel.h - itemInfoBox.y - 20;
+		itemInfoBox.setAlpha(0);
+		itemInfoBox.font = panelFont_minor;
+		itemInfoBox.foreColor = infoPanel_col1;
+		inventoryPanel.controls.push_back(&itemInfoBox);
 	}
 	
 	/*First level up panel*/{
@@ -3648,6 +3804,36 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 	wisUp.addHandler_click(wisUp_click);
 	
 	stats_levelUp.controls.push_back(&levelUp_caption);
+	}
+	
+	/*Quest info panel*/{
+	questPanel.w = bigPanel_pict->w;
+	questPanel.h = bigPanel_pict->h;
+	questPanel.x = (window->w - questPanel.w) / 2;
+	questPanel.y = (window->h - questPanel.h) / 2;
+	questPanel.printMethod = bigPanelPrint;
+	questPanel.setClickArea();
+	
+	questNameBox.x = 5;
+	questNameBox.y = 5;
+	questNameBox.w = questPanel.w;
+	questNameBox.h = 30;
+	questNameBox.font = panelFont_major;
+	questNameBox.foreColor = infoPanel_col1;
+	questNameBox.setAlpha(0);
+	questNameBox.textAlign = CENTER;
+	questPanel.controls.push_back(&questNameBox);
+	
+	questInfoBox = questNameBox;
+	questInfoBox.x += 5;
+	questInfoBox.y += questInfoBox.h;
+	questInfoBox.w -= 10;
+	questInfoBox.h = questPanel.h - questInfoBox.y - 5;
+	questInfoBox.font = panelFont_minor;
+	questInfoBox.textAlign = LEFT;
+	questPanel.controls.push_back(&questInfoBox);
+	
+	questPanel.controls.push_back(&btn_quit);
 	}
 	
 	/*Sets operators*/{

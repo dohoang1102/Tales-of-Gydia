@@ -5,6 +5,7 @@
 
 #include <string>//Include strings
 #include <list>//Include lists
+#include <deque>//Include deques
 #include <cmath>//Include C math
 
 #include <SDL/SDL.h>//Include base SDL library
@@ -852,15 +853,57 @@ void textBox_print_default(SDL_Surface* target, textBox* e){
 	boxColor(target, e->x, e->y, e->x + e->w, e->y + e->h, e->getBackColor());//Prints filled rectangle
 	
 	if ((e->text != "" || e->isFocused()) && e->font){//If there are valid text and font
-		SDL_Surface* text = RENDERTEXT(e->font, (e->text + (e->isFocused() && e->edit ? "|" : "")).c_str(), e->getForeColor());//Text
-		SDL_Rect offset;//Offset rectangle
-		
-		if (e->textAlign == LEFT) offset = {e->x + 5, e->y + 5};
-		else if (e->textAlign == RIGHT) offset = {e->x + e->w - text->w, e->y + 5};
-		else if (e->textAlign == CENTER) offset = {e->x + (e->w - text->w) / 2, e->y + 5};
-		
-		SDL_BlitSurface(text, NULL, target, &offset);//Prints text
-		SDL_FreeSurface(text);//Frees text
+		#ifdef _SCRIPT//If script defined (that is, if tokenize func is available)
+			string curLine = "";//Current line
+			int w = 0;//Text width
+			int i = 0;//Counter
+			int curY = e->y + 5;//Current y coord
+			deque<string> tokens = tokenize(e->text + (e->isFocused() && e->edit ? "|" : ""), " \t");//Text tokens
+			
+			
+			while (i < tokens.size()){//While the line is not long enough
+				TTF_SizeText(e->font, (curLine + tokens[i] + " ").c_str(), &w, NULL);//Calcs width
+				
+				if (w <= e->w - 10 && tokens[i] != "\\n") curLine += tokens[i] + " ";//Adds token if there's still space and it is not a newline
+				else {//Else
+					SDL_Surface* text = RENDERTEXT(e->font, curLine.c_str(), e->getForeColor());//Renders line
+					SDL_Rect offset;//Offset rectangle
+			
+					if (e->textAlign == LEFT) offset = {e->x + 5, curY};
+					else if (e->textAlign == RIGHT) offset = {e->x + e->w - text->w, curY};
+					else if (e->textAlign == CENTER) offset = {e->x + (e->w - text->w) / 2, curY};
+					
+					SDL_BlitSurface(text, NULL, target, &offset);//Prints text
+					SDL_FreeSurface(text);//Frees text
+					
+					curY += TTF_FontHeight(e->font) + 1;//Caret down
+					curLine = (tokens[i] == "\\n" ? "" : tokens[i] + " ");//Resets line
+				}
+				
+				i++;
+			}
+			
+			//Prints last line
+			SDL_Surface* text = RENDERTEXT(e->font, curLine.c_str(), e->getForeColor());//Renders line
+			SDL_Rect offset;//Offset rectangle
+	
+			if (e->textAlign == LEFT) offset = {e->x + 5, curY};
+			else if (e->textAlign == RIGHT) offset = {e->x + e->w - text->w, curY};
+			else if (e->textAlign == CENTER) offset = {e->x + (e->w - text->w) / 2, curY};
+			
+			SDL_BlitSurface(text, NULL, target, &offset);//Prints text
+			SDL_FreeSurface(text);//Frees text
+		#else
+			SDL_Surface* text = RENDERTEXT(e->font, (e->text + (e->isFocused() && e->edit ? "|" : "")).c_str(), e->getForeColor());//Text
+			SDL_Rect offset;//Offset rectangle
+			
+			if (e->textAlign == LEFT) offset = {e->x + 5, e->y + 5};
+			else if (e->textAlign == RIGHT) offset = {e->x + e->w - text->w, e->y + 5};
+			else if (e->textAlign == CENTER) offset = {e->x + (e->w - text->w) / 2, e->y + 5};
+			
+			SDL_BlitSurface(text, NULL, target, &offset);//Prints text
+			SDL_FreeSurface(text);//Frees text*/
+		#endif
 	}
 }
 

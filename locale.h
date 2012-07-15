@@ -52,21 +52,21 @@ class txt{
 };
 
 //Class localization
-class locale{
+class loc{
 	public:
-	string lang;//Language
+	string id;//Language id
 	list <txt> texts;//Texts of the locale
 	
 	//Constructor
-	locale(){
-		lang = "";
+	loc(){
+		id = "";
 	}
 	
 	//Function to add new text
 	void add(string id, string text){
 		txt t;//New text
 		t.id = id;
-		t.lang = lang;
+		t.lang = this->id;
 		t.text = text;
 		texts.push_back(t);//Adds new text
 	}
@@ -78,26 +78,24 @@ class locale{
 			if (t->id == id) return t->text;//Returns text if matching
 			
 		#ifdef _ERROR
-			if (errFunc) errFunc(LOCALE_INVALIDTEXTIDWARNING, "Invalid text id " + id + "," + lang);
+			if (errFunc) errFunc(LOCALE_INVALIDTEXTIDWARNING, "Invalid text id " + id + "," + this->id);
 		#endif
 		
-		return "";//Returns empty string if no text was found
+		return id;//Returns empty string if no text was found
 	}
 	
 	#ifdef _SCRIPT//If the script header has been included
 		//Function to load from script object
 		void fromScriptObj(object o){
 			if (o.type == OBJTYPE_LOCALE){//If the object type is matching
-				var* lang = o.getVar("lang");//Language variable
-								
-				if (lang) this->lang = lang->value;//Loads language
+				id = o.name;
 				
 				deque<object>::iterator i;//Iterator
 				for (i = o.o.begin(); i != o.o.end(); i++){//For each sub-object
 					if (i->type == OBJTYPE_TEXT){//If object is a text
 						txt newText;//New text
 						newText.fromScriptObj(*i);//Loads text
-						newText.lang = this->lang;//Corrects language
+						newText.lang = id;//Corrects language
 						texts.push_back(newText);//Adds new text
 					}
 				}
@@ -108,6 +106,24 @@ class locale{
 			#endif
 		}
 	#endif
+	
+	//Function to merge two localizations (new localization contains texts from both old ones)
+	loc operator + (loc l){
+		loc result;//Result localization
+		
+		result.id = id;//Sets id
+		
+		list<txt>::iterator i;//Iterator
+		for (i = texts.begin(); i != texts.end(); i++) result.texts.push_back(*i);//Adds texts from this locale
+		for (i = l.texts.begin(); i != l.texts.end(); i++) result.texts.push_back(*i);//Adds texts from other locale
+		
+		return result;//Returns result
+	}
+	
+	//Increment operator
+	void operator += (loc l){
+		*this = *this + l;
+	}
 };
 
 #endif

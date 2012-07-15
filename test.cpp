@@ -4,7 +4,7 @@
 #include "game.h"
 
 int lfb = 0;
-int fps = 40;
+int fps = 30;
 
 int main(int argc, char* argv[]){
 	bool input = true;
@@ -22,6 +22,9 @@ int main(int argc, char* argv[]){
 		}
 		
 		SDL_FillRect(window, &window->clip_rect, 0);
+		
+		SDL_Rect titleOffset = {(window->w - title_image->w) / 2, 150};
+		SDL_BlitSurface(title_image, NULL, window, &titleOffset);
 		
 		btn_newGame.print(window);
 		btn_loadGame.print(window);
@@ -56,6 +59,10 @@ int main(int argc, char* argv[]){
 					
 					case SDLK_u:
 					if (current.view != LEVELUP_1 && current.view != LEVELUP_2) current.view = PLAYER;
+					break;
+					
+					case SDLK_o:
+					if (current.view != LEVELUP_1 && current.view != LEVELUP_2) current.view = QUEST;
 					break;
 				}
 			}
