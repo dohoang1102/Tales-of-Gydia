@@ -110,6 +110,7 @@ int DB_VARIABLEWARNING		= getErrorCode();//Non-lethal variable error in database
 #define LEVELUP_1			3//Level up view
 #define LEVELUP_2			4//Level up view
 #define QUEST				5//Quest info view
+#define EXCHANGE			6//Exchange view
 
 //Game calculations: damage, mana costs, ...
 #define MINDAMAGE							-1//Minimum damage that can be taken (if calculates lower damage, replaced with this value)
@@ -235,6 +236,11 @@ button strUp, conUp, intUp, wisUp;//Stats buttons
 panel questPanel;//Quest info panel
 textBox questNameBox;//Quest name text box
 textBox questInfoBox;//Quest info text box
+
+//Windows: exchange
+panel exchangePanel;//Exchange panel
+imageBox exch_slots [12];//Exchange slot boxes
+button btn_sell;//Sell button
 
 //Colors
 Uint32 infoPanel_col1 = 0x000000;//Color for main stuff in info panel
@@ -534,50 +540,6 @@ string getText(string id){
 	if (main) return main->getText(id);//Returns text if found
 	else return id;//Else returns required id
 }
-
-//Decoration class
-class deco: public content{
-	public:
-	image i;//Decoration image
-	bool free;//Free flag: can walk on deco
-	bool free_air;//Air free flag
-	int x, y;//Coords of deco
-	
-	//Constructor
-	deco(){
-		free = true;
-		free_air = true;
-		x = 0;
-		y = 0;
-	}
-	
-	//Function to load from script object
-	void fromScriptObj(object o){
-		if (o.type == OBJTYPE_DECO){//If type matches
-			content::fromScriptObj(o);//Loads content base data
-			
-			var* free = o.getVar("free");//Free flag
-			var* free_air = o.getVar("free_air");//Air free flag
-			object* i = o.getObj("image");//Image flag
-			
-			if (free) this->free = free->intValue();//Gets free flag
-			if (free_air) this->free_air = free_air->intValue();//Gets air free flag
-			if (i) this->i.fromScriptObj(*i);//Gets image
-		}
-	}
-	
-	//Print function
-	void print(SDL_Surface* target, int x, int y){
-		i.print(target, x, y);
-	}
-};
-
-//Function determining if a deco comes before another one (lower y or equal y and lower x)
-bool sortDecos_compare(deco* a, deco* b){
-	return a->y < b->y || (a->y == b->y && a->x < b->x);
-}
-
-list <deco> decoDb;//Decos database
 
 //Terrain class
 class terrain: public content{
@@ -989,6 +951,80 @@ class weapon: public item{
 };
 
 list <weapon> weaponDb;//Weapons database
+
+//Function to get item from one of databases above
+item* getItem(string id){
+	if (get(&itemDb, id)) return (item*) get(&itemDb, id);
+	else if (get(&clothDb, id)) return (item*) get(&clothDb, id);
+	else if (get(&weaponDb, id)) return (item*) get(&weaponDb, id);
+	else return NULL;
+}
+
+//Decoration class
+class deco: public content{
+	public:
+	image i;//Decoration image
+	bool free;//Free flag: can walk on deco
+	bool free_air;//Air free flag
+	int x, y;//Coords of deco
+	
+	item *inside [12];//Items inside decoration
+	
+	//Constructor
+	deco(){
+		free = true;
+		free_air = true;
+		x = 0;
+		y = 0;
+		
+		int i;
+		for (i = 0; i < 12; i++) inside[i] = NULL;
+	}
+	
+	//Function to load from script object
+	void fromScriptObj(object o){
+		if (o.type == OBJTYPE_DECO){//If type matches
+			content::fromScriptObj(o);//Loads content base data
+			
+			var* free = o.getVar("free");//Free flag
+			var* free_air = o.getVar("free_air");//Air free flag
+			object* i = o.getObj("image");//Image flag
+			var* inside = o.getVar("content");//Content variable
+			
+			if (free) this->free = free->intValue();//Gets free flag
+			if (free_air) this->free_air = free_air->intValue();//Gets air free flag
+			if (i) this->i.fromScriptObj(*i);//Gets image
+			
+			if (inside){//If there's an inside variable
+				deque<string> tokens = tokenize(inside->value, ", \t");//Splits content
+				
+				int n;//Counter
+				for (n = 0; n < tokens.size() && n < 12; n++)//For each token
+					this->inside[n] = getItem(tokens[n]);//Sets item
+			}
+			
+		}
+	}
+	
+	//Print function
+	void print(SDL_Surface* target, int x, int y){
+		i.print(target, x, y);
+	}
+	
+	//Function to get the first free slot of inventory (or -1 if none)
+	int freeSlot(){
+		int i;
+		for (i = 0; i < 12; i++) if (inside[i] == NULL) return i;
+		return -1;
+	}
+};
+
+//Function determining if a deco comes before another one (lower y or equal y and lower x)
+bool sortDecos_compare(deco* a, deco* b){
+	return a->y < b->y || (a->y == b->y && a->x < b->x);
+}
+
+list <deco> decoDb;//Decos database
 
 //Unit class
 class unit: public content{
@@ -2557,6 +2593,11 @@ class campaign: public content{
 			updateQuestPanel();//Updates quests panel
 			questPanel.print(target);//Prints quests panel
 		}
+		
+		//Exchange view
+		if (view == EXCHANGE){
+			exchangePanel.print(target);//Prints exchange panel
+		}
 	}
 	
 	//Next sequence function
@@ -3994,6 +4035,25 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 	questPanel.controls.push_back(&questInfoBox);
 	
 	questPanel.controls.push_back(&btn_quit);
+	}
+	
+	/*Exchange panel*/{
+	exchangePanel.w = bigPanel_pict->w;
+	exchangePanel.h = bigPanel_pict->h;
+	exchangePanel.x = (window->w - questPanel.w) / 2;
+	exchangePanel.y = (window->h - questPanel.h) / 2;
+	exchangePanel.printMethod = bigPanelPrint;
+	exchangePanel.setClickArea();
+	
+	int i;
+	for (i = 0; i < 12; i++){
+		exchangePanel.controls.push_back(&inv_slots[i]);
+		
+		exch_slots[i] = inv_slots[i];
+		exch_slots[i].id = toString(atoi(inv_slots[i].id.c_str()) * 2);
+		exch_slots[i].x += exchangePanel.w - 20 - 4 * exch_slots[i].w;
+		exchangePanel.controls.push_back(&exch_slots[i]);
+	}
 	}
 	
 	/*Sets operators*/{

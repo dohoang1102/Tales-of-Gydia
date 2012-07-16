@@ -64,6 +64,10 @@ int main(int argc, char* argv[]){
 					case SDLK_o:
 					if (current.view != LEVELUP_1 && current.view != LEVELUP_2) current.view = QUEST;
 					break;
+					
+					case SDLK_p:
+					if (current.view != LEVELUP_1 && current.view != LEVELUP_2) current.view = EXCHANGE;
+					break;
 				}
 			}
 			
