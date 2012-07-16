@@ -45,7 +45,7 @@ int main(int argc, char* argv[]){
 			else if (e.type == SDL_KEYDOWN){
 				switch (e.key.keysym.sym){
 					case SDLK_RETURN:
-					if (current.view == GAME) current.nextDialog();
+					if (current.view == GAME && current.ansCount() <= 1) current.nextDialog();
 					break;
 					
 					case SDLK_ESCAPE:

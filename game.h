@@ -128,6 +128,7 @@ int tilesSide = 32;//Side of each tile of the map
 
 deque<op> ops_bool;//Boolean script operators
 deque<op> ops_int;//Intger script operators
+deque<op> ops_str;//String script operators
 
 //Game status
 bool running = true;
@@ -185,7 +186,11 @@ SDL_Rect bar_xp_offset = {0, 0};//Xp fill offset
 
 //Dialogs
 SDL_Surface* dialog_pict = NULL;//Dialog box picture
+SDL_Surface* dialog_actor_pict = NULL;//Dialog actor box picture
+int dialog_actor_x, dialog_actor_y, dialog_actor_nameY;//Coords of image and name in actor picture
 textBox dialogBox;//Dialog box
+imageBox dialogBox_actor;//Actor dialog box
+button btn_answers[4];//Answer buttons
 
 //Windows: global
 button btn_quit;//Quit button
@@ -206,7 +211,7 @@ button btn_use, btn_drop;//Use and drop inventory buttons
 
 //Windows: player info
 panel infoPanel;//Player info panel
-textBox nameBox;//Player name box
+imageBox nameBox;//Player name box
 textBox hpBox, mpBox;//Player hp and mp box
 textBox xpBox;//Player xp box
 textBox strBox, intBox, conBox, wisBox;//Statistics boxes
@@ -254,6 +259,9 @@ string ops_int_sum(string a, string b){ return toString(atoi(a.c_str()) + atoi(b
 string ops_int_subt(string a, string b){ return toString(atoi(a.c_str()) - atoi(b.c_str())); }
 string ops_int_mult(string a, string b){ return toString(atoi(a.c_str()) * atoi(b.c_str())); }
 string ops_int_div(string a, string b){ return toString(atoi(a.c_str()) / atoi(b.c_str())); }
+
+//String operators functions
+string ops_str_concat(string a, string b){ return a + b; }
 
 //Mid panel printing function
 void midPanelPrint(SDL_Surface* target, control* p){
@@ -304,44 +312,61 @@ void dialogPrint(SDL_Surface* target, control* p){
 	
 	if (dialogBox.text != "" && dialogBox.font){//If there's a text to print
 		string curLine = "";//Current line
-			int w = 0;//Text width
-			int i = 0;//Counter
-			int curY = e->y + 35;//Current y coord
-			deque<string> tokens = tokenize(e->text + (e->isFocused() && e->edit ? "|" : ""), " \t");//Text tokens
+		int w = 0;//Text width
+		int i = 0;//Counter
+		int curY = e->y + 25;//Current y coord
+		deque<string> tokens = tokenize(e->text + (e->isFocused() && e->edit ? "|" : ""), " \t");//Text tokens
+		
+		
+		while (i < tokens.size()){//While the line is not long enough
+			TTF_SizeText(e->font, (curLine + tokens[i] + " ").c_str(), &w, NULL);//Calcs width
 			
-			
-			while (i < tokens.size()){//While the line is not long enough
-				TTF_SizeText(e->font, (curLine + tokens[i] + " ").c_str(), &w, NULL);//Calcs width
+			if (w <= e->w - 10 && tokens[i] != "\\n") curLine += tokens[i] + " ";//Adds token if there's still space and it is not a newline
+			else {//Else
+				SDL_Surface* text = RENDERTEXT(e->font, curLine.c_str(), e->getForeColor());//Renders line
+				SDL_Rect offset;//Offset rectangle
+		
+				if (e->textAlign == LEFT) offset = {e->x + 5, curY};
+				else if (e->textAlign == RIGHT) offset = {e->x + e->w - text->w, curY};
+				else if (e->textAlign == CENTER) offset = {e->x + (e->w - text->w) / 2, curY};
 				
-				if (w <= e->w - 10) curLine += tokens[i] + " ";//Adds token if there's still space
-				else {//Else
-					SDL_Surface* text = RENDERTEXT(e->font, curLine.c_str(), e->getForeColor());//Renders line
-					SDL_Rect offset;//Offset rectangle
-			
-					if (e->textAlign == LEFT) offset = {e->x + 5, curY};
-					else if (e->textAlign == RIGHT) offset = {e->x + e->w - text->w, curY};
-					else if (e->textAlign == CENTER) offset = {e->x + (e->w - text->w) / 2, curY};
-					
-					SDL_BlitSurface(text, NULL, target, &offset);//Prints text
-					SDL_FreeSurface(text);//Frees text
-					
-					curY += TTF_FontHeight(e->font) + 1;//Caret down
-					curLine = "";//Resets line
-				}
+				SDL_BlitSurface(text, NULL, target, &offset);//Prints text
+				SDL_FreeSurface(text);//Frees text
 				
-				i++;//Next token
+				curY += TTF_FontHeight(e->font) + 1;//Caret down
+				curLine = (tokens[i] == "\\n" ? "" : tokens[i] + " ");//Resets line
 			}
 			
-			//Prints last line
-			SDL_Surface* text = RENDERTEXT(e->font, curLine.c_str(), e->getForeColor());//Renders line
-			SDL_Rect offset;//Offset rectangle
+			i++;
+		}
+		
+		//Prints last line
+		SDL_Surface* text = RENDERTEXT(e->font, curLine.c_str(), e->getForeColor());//Renders line
+		SDL_Rect offset;//Offset rectangle
+
+		if (e->textAlign == LEFT) offset = {e->x + 5, curY};
+		else if (e->textAlign == RIGHT) offset = {e->x + e->w - text->w, curY};
+		else if (e->textAlign == CENTER) offset = {e->x + (e->w - text->w) / 2, curY};
+		
+		SDL_BlitSurface(text, NULL, target, &offset);//Prints text
+		SDL_FreeSurface(text);//Frees text
+	}
+}
+
+//Dialog portrait printing function
+void dialogPortraitPrint(SDL_Surface* target, control* p){
+	imageBox* e = (imageBox*) p;//Converts to image box
 	
-			if (e->textAlign == LEFT) offset = {e->x + 5, curY};
-			else if (e->textAlign == RIGHT) offset = {e->x + e->w - text->w, curY};
-			else if (e->textAlign == CENTER) offset = {e->x + (e->w - text->w) / 2, curY};
-			
-			SDL_BlitSurface(text, NULL, target, &offset);//Prints text
-			SDL_FreeSurface(text);//Frees text
+	SDL_Rect offset = {e->x, e->y};//Offet rectangle
+	SDL_BlitSurface(dialog_actor_pict, NULL, target, &offset);//Prints rectangle
+
+	if (e->i) e->i->print(target, e->x + dialog_actor_x, e->y + dialog_actor_y);//Prints slot image
+	
+	if (e->id != "" && panelFont_minor){//If there's an available
+		SDL_Surface* text = TTF_RenderText_Blended(panelFont_minor, e->id.c_str(), dialogBox.getForeColor());//Renders text
+		SDL_Rect offset {e->x + (e->w - text->w) / 2, e->y + dialog_actor_nameY - text->h / 2};//Offset rectangle
+		SDL_BlitSurface(text, NULL, target, &offset);//Prints text
+		SDL_FreeSurface(text);//Frees text
 	}
 }
 
@@ -1114,6 +1139,7 @@ class unit: public content{
 			var* sight = o.getVar("sight");//Sight variable
 			var* flying = o.getVar("flying");//Flying variable
 			var* xpReward = o.getVar("xpReward");//XP reward
+			object* portrait = o.getObj("portrait");//Unit portrait
 			
 			if (anims) this->anims.fromScriptObj(*anims);//Loads animations
 			if (hits) this->baseMaxHits = hits->intValue();//Gets max hits
@@ -1129,6 +1155,8 @@ class unit: public content{
 			if (flying) this->flying = flying->intValue();//Gets flying
 			
 			if (xpReward) this->xpReward = xpReward->intValue();//Gets xp reward
+			
+			if (portrait) this->portrait.fromScriptObj(*portrait);//Gets portrait
 			
 			this->anims.setAnim("idle_s");//Turns south
 			this->baseHits = this->baseMaxHits;//Sets hits
@@ -2370,10 +2398,16 @@ class campaign: public content{
 	int turnCount;//Turn count
 
 	deque<string> dialogSeq;//Current dialog sequence
+	deque<unit*> dialogActors;//Current dialog actors
+	
+	deque<string> dialogAns[4];//Current dialog answers
+	deque<string> dialogOutVar;//Output variable (used to store answers)
 	
 	int view;//Current view
 	
 	string questName, questInfo;//Quest name and information strings
+	
+	deque<var> variables;//Campaign global variables
 	
 	//Constructor
 	campaign(){
@@ -2403,6 +2437,16 @@ class campaign: public content{
 				}
 			}
 		}
+	}
+	
+	//Function to count dialog answers
+	int ansCount(){
+		int result = 0;//Current answers count
+		if (dialogAns[0].size() > 0 && dialogAns[0][0] != "") result++;
+		if (dialogAns[1].size() > 0 && dialogAns[1][0] != "") result++;
+		if (dialogAns[2].size() > 0 && dialogAns[2][0] != "") result++;
+		if (dialogAns[3].size() > 0 && dialogAns[3][0] != "") result++;
+		return result;
 	}
 	
 	//Printing function
@@ -2471,6 +2515,21 @@ class campaign: public content{
 			dialogBox.print(target);
 		}
 		
+		if (dialogActors.size() > 0 && dialogActors[0]){//If needs to show actor
+			dialogBox_actor.i = &dialogActors[0]->portrait;//Sets portrait
+			dialogBox_actor.id = dialogActors[0]->name;//Sets name
+			dialogBox_actor.print(target);
+		}
+	
+		if (dialogSeq.size() > 0 && ansCount() > 0){//If there are answers
+			int n;//Counter
+			for (n = 0; n < ansCount(); n++){//For each answer
+				btn_answers[n].text = dialogAns[n][0];//Sets text
+				btn_answers[n].x = dialogBox.x + dialogBox.w / 2 - (btn_answers[n].w * ansCount() + 10 * (ansCount() - 1)) / 2 + n * (btn_answers[n].w + 10);
+				btn_answers[n].print(target);
+			}
+		}
+		
 		//Player info view
 		if (view == PLAYER){
 			updateInfoPanel();//Updates info panel
@@ -2512,7 +2571,10 @@ class campaign: public content{
 	
 	//Next frame function
 	void nextFrame(){
-		if (m && view == GAME) m->nextFrame();//Goes to map next frame if possible
+		if (m && view == GAME){
+			m->nextFrame();//Goes to map next frame if possible
+			seq[curSequence].checkEvents(this);//Checks sequence events
+		}
 	}
 	
 	//Turn moves function
@@ -2550,7 +2612,6 @@ class campaign: public content{
 		
 		else if (turn == 1){
 			m->tempEffects();//Applies temporary effects
-			seq[curSequence].checkEvents(this);//Checks sequence events
 			
 			turn = 0;//Restarts turn
 			turnCount++;//Increases turn count
@@ -2565,6 +2626,17 @@ class campaign: public content{
 		if (dialogSeq.size() > 0){//If there are still dialogs
 			dialogSeq.pop_front();//Removes first dialog text
 		}
+		
+		if (dialogActors.size() > 0){//If there are dialog actors
+			dialogActors.pop_front();//Removes first dialog actor
+		}
+		
+		if (dialogAns[0].size() > 0) dialogAns[0].pop_front();
+		if (dialogAns[1].size() > 0) dialogAns[1].pop_front();
+		if (dialogAns[2].size() > 0) dialogAns[2].pop_front();
+		if (dialogAns[3].size() > 0) dialogAns[3].pop_front();
+		
+		if (dialogOutVar.size() > 0) dialogOutVar.pop_front();
 	}
 	
 	//Function to update info panel content
@@ -2593,27 +2665,28 @@ class campaign: public content{
 			else if (wis < player.units[0]->baseWisdom) wisBox.foreColor = infoPanel_col4;
 			else wisBox.foreColor = infoPanel_col2;
 			
-			nameBox.text = player.units[0]->name;//Sets name box
-			hpBox.text = "HP: " + toString(player.units[0]->hits()) + "/" + toString(player.units[0]->maxHits());//HP box
-			mpBox.text = "MP: " + toString(player.units[0]->mana()) + "/" + toString(player.units[0]->maxMana());//MP box
-			xpBox.text = "level " + toString(player.units[0]->level) + " - XP: " + toString(player.units[0]->xp) + "/" + toString(CALC_REQUIREDXP(player.units[0]->level));//Xp box
-			strBox.text = "str: " + toString(player.units[0]->strength());//Sets strength box
-			conBox.text = "con: " + toString(player.units[0]->constitution());//Sets constitution box
-			intBox.text = "int: " + toString(player.units[0]->intelligence());//Sets intelligence box
-			wisBox.text = "wis: " + toString(player.units[0]->wisdom());//Sets wisdom box
+			nameBox.id = player.units[0]->name;//Sets name box
+			nameBox.i = &player.units[0]->portrait;//Sets name box picture
+			hpBox.text = getText("hits_abbr") + ": " + toString(player.units[0]->hits()) + "/" + toString(player.units[0]->maxHits());//HP box
+			mpBox.text = getText("mana_abbr") + ": " + toString(player.units[0]->mana()) + "/" + toString(player.units[0]->maxMana());//MP box
+			xpBox.text = getText("level") + " " + toString(player.units[0]->level) + " - XP: " + toString(player.units[0]->xp) + "/" + toString(CALC_REQUIREDXP(player.units[0]->level));//Xp box
+			strBox.text = getText("str_abbr") + ": " + toString(player.units[0]->strength());//Sets strength box
+			conBox.text = getText("con_abbr") + ": " + toString(player.units[0]->constitution());//Sets constitution box
+			intBox.text = getText("int_abbr") + ": " + toString(player.units[0]->intelligence());//Sets intelligence box
+			wisBox.text = getText("wis_abbr") + ": " + toString(player.units[0]->wisdom());//Sets wisdom box
 			
 			//Sets effect box
 			effBox.text = "";
 			list<effect>::iterator i;//Effect iterator
 			for (i = player.units[0]->tempEffects.begin(); i != player.units[0]->tempEffects.end(); i++)//For each temporary effect on unit
-				effBox.text += i->description + " (" + toString(i->duration + 1) + ") ";//Adds effect info to box
+				effBox.text += i->description + " (" + toString(i->duration + 1) + ") \\n ";//Adds effect info to box
 				
 			//Sets resistance boxes
 			list<textBox*>::iterator t;//Text box iterator
 			for (t = resBox.begin(); t != resBox.end(); t++){//For each text box
 				double effRes = player.units[0]->typeMult((*t)->id);//Gets effect resistance
 				
-				(*t)->text = (*t)->id + " " + toString((1 - effRes) * 100) + "\%";//Sets label text
+				(*t)->text = get(&damTypeDb, (*t)->id)->shownName + " " + toString((1 - effRes) * 100) + "\%";//Sets label text
 				
 				if (effRes > 1) (*t)->foreColor = infoPanel_col4;
 				else if (effRes < 1) (*t)->foreColor = infoPanel_col3;
@@ -2649,7 +2722,7 @@ class campaign: public content{
 			}
 			
 			//Sets use button text
-			if (slot_selected != -1 && slot_selected < 11){
+			if (slot_selected != -1 && slot_selected < 12){
 				item* i = player.units[0]->inv[slot_selected];//Selected item
 				if (i && i->itemType == DISPOSABLE) btn_use.text = getText("use");
 				else if (i) btn_use.text = getText("equip");
@@ -2672,7 +2745,7 @@ class campaign: public content{
 					case 16: it = player.units[0]->spell; break;
 				}
 				
-				if (it && it->shownName != "" || it->description != ""){
+				if (it && (it->shownName != "" || it->description != "")){
 					string typeString;
 					switch (it->itemType){
 						case DISPOSABLE: typeString = getText("item"); break;
@@ -2689,7 +2762,8 @@ class campaign: public content{
 					itemInfoBox.text = it->shownName + " (" + typeString + ") \\n " + it->description;
 				}
 					
-				else itemInfoBox.text = getText("noInfoAvailable");
+				else if (it) itemInfoBox.text = getText("noInfoAvailable");
+				else itemInfoBox.text = getText("noItemSelected");
 			}
 			
 			else itemInfoBox.text = getText("noItemSelected");
@@ -2698,12 +2772,19 @@ class campaign: public content{
 	
 	//Function to update quest panel
 	void updateQuestPanel(){
-		questNameBox.text = "Current quest: " + questName;
+		questNameBox.text = getText("currentQuest") + " " + questName;
 		questInfoBox.text = questInfo;
 	}
 	
 	//Function to check events
 	void events(SDL_Event e){
+		if (view == GAME){
+			if (ansCount() > 0) btn_answers[0].checkEvents(e);
+			if (ansCount() > 1) btn_answers[1].checkEvents(e);
+			if (ansCount() > 2) btn_answers[2].checkEvents(e);
+			if (ansCount() > 3) btn_answers[3].checkEvents(e);
+		}
+		
 		if (view == PLAYER) infoPanel.checkEvents(e);
 		else if (view == INVENTORY) inventoryPanel.checkEvents(e);
 		else if (view == LEVELUP_1) hp_mp_levelUp.checkEvents(e);
@@ -2885,7 +2966,7 @@ int script::exec(campaign* c){
 	int i;//Counter
 	int result = VOID;//Script result (false on errors)
 	
-	deque<var> vars;//Known variables
+	deque<var> vars = c->variables;//Known variables
 	
 	for (i = 0; i < cmds.size(); i++){//For each instruction		
 		deque<string> tokens = tokenize(cmds[i], "\t ");
@@ -2944,6 +3025,28 @@ int script::exec(campaign* c){
 						if (vName == "wisdom") tokens[j] = toString(u->wisdom());
 					}
 				}
+				
+				//Variable existance info
+				else if (tokens[j].substr(0, 7) == "$exist."){//Asks for variable existance
+					string vName = tokens[j].substr(7);//Variable name
+					
+					int result = 0;//Result
+					int n;//Counter
+					for (n = 0; n < vars.size(); n++) if (vars[n].name == vName) result = 1;//Sets result to true if found variable
+					
+					tokens[j] = toString(result);//Sets token
+				}
+				
+				//Variable not found yet
+				else {
+					deque<var>::iterator v;//Variable iterator
+					for (v = vars.begin(); v != vars.end(); v++){//For each variable
+						if (v->name == tokens[j].substr(1)){//If variable matches
+							tokens[j] = v->value;//Sets token
+							break;//Exits loop
+						}
+					}
+				}
 			}
 		}
 		
@@ -2955,6 +3058,17 @@ int script::exec(campaign* c){
 			
 			var newVar (tokens[1], expr(s, &ops_int));//New variable
 			vars.push_back(newVar);//Adds variable
+			c->variables.push_back(newVar);//Adds variable
+		}
+		
+		if (tokens[0] == "string" && tokens.size() >= 3){//String variable declaration
+			string s = "";//Expression
+			int j;//Counter
+			for (j = 2; j < tokens.size(); j++) s += tokens[j] + " ";//Adds each token to string
+			
+			var newVar (tokens[1], expr(s, &ops_str));//New variable
+			vars.push_back(newVar);//Adds variable
+			c->variables.push_back(newVar);//Adds variable
 		}
 		
 		if (tokens[0] == "var" && tokens.size() >= 3){//General variable declaration
@@ -2965,6 +3079,7 @@ int script::exec(campaign* c){
 			
 			var newVar(tokens[1], s);//New variable
 			vars.push_back(newVar);//Adds variable
+			c->variables.push_back(newVar);//Adds variable
 		}
 		}
 		
@@ -3108,6 +3223,21 @@ int script::exec(campaign* c){
 		/*Story telling*/{
 		if (tokens[0] == "dialog" && tokens.size() >= 2){//Dialog instruction
 			c->dialogSeq.push_back(getText(tokens[1]));//Adds dialog
+			
+			if (tokens.size() >= 3) c->dialogActors.push_back(c->m->getUnit_name(tokens[2]));//Adds dialog actor if given
+			else c->dialogActors.push_back(NULL);//Else adds null actor
+			
+			int n;//Counter
+			for (n = 2; n < tokens.size(); n++){
+				if (tokens[n] == "ans"){//Answers
+					if (n + 1 < tokens.size()) c->dialogOutVar.push_back(tokens[n + 1]); else c->dialogOutVar.push_back("");
+					if (n + 2 < tokens.size()) c->dialogAns[0].push_back(getText(tokens[n + 2])); else c->dialogAns[0].push_back("");
+					if (n + 3 < tokens.size()) c->dialogAns[1].push_back(getText(tokens[n + 3])); else c->dialogAns[1].push_back("");
+					if (n + 4 < tokens.size()) c->dialogAns[2].push_back(getText(tokens[n + 4])); else c->dialogAns[2].push_back("");
+					if (n + 5 < tokens.size()) c->dialogAns[3].push_back(getText(tokens[n + 5])); else c->dialogAns[3].push_back("");
+					break;
+				}
+			}
 		}
 		}
 		
@@ -3370,6 +3500,14 @@ void btn_quitMenu_click(control* p, mouseEvent ev){
 	running = false;
 }
 
+//Function to handle click on dialog answers
+void btn_ans_click(control* p, mouseEvent ev){
+	var newVar (current.dialogOutVar[0], p->id);//Answer variable
+	current.variables.push_back(newVar);//Adds variable to campaign
+	cout << newVar.name << " set to " << newVar.value << endl;
+	current.nextDialog();//Next dialog
+}
+
 //Function to load database from object
 void loadDatabase(object o){
 	deque<object>::iterator i;//Iterator
@@ -3508,6 +3646,10 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 	
 	if (theme.getVar("dialogBox_img")) dialog_pict = CACHEDIMG(theme.getVar("dialogBox_img")->value);//Loads dialog box picture
 	if (theme.getVar("dialogBox_col")) dialog_col = strtol(theme.getVar("dialogBox_col")->value.c_str(), NULL, 0);//Loads dialog color
+	if (theme.getVar("dialogBox_actor_img")) dialog_actor_pict = CACHEDIMG(theme.getVar("dialogBox_actor_img")->value);//Loads actor dialog box picture
+	if (theme.getVar("dialogBox_actor_imgX")) dialog_actor_x = theme.getVar("dialogBox_actor_imgX")->intValue();//Loads actor image offset
+	if (theme.getVar("dialogBox_actor_imgY")) dialog_actor_y = theme.getVar("dialogBox_actor_imgY")->intValue();//Loads actor image offset
+	if (theme.getVar("dialogBox_actor_captionY")) dialog_actor_nameY = theme.getVar("dialogBox_actor_captionY")->intValue();//Loads actor name offset
 	
 	if (theme.getVar("bigPanel_img")) bigPanel_pict = CACHEDIMG(theme.getVar("bigPanel_img")->value);//Loads big panel picture
 	if (theme.getVar("slot_img")) slot_pict = CACHEDIMG(theme.getVar("slot_img")->value);//Loads weapon box picture
@@ -3572,29 +3714,30 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 	infoPanel.controls.push_back(&btn_quit);
 	
 	//Name text box
-	nameBox.x = 5;
-	nameBox.y = 5;
-	nameBox.w = infoPanel.w - 2 * nameBox.x;
-	nameBox.h = 20;
-	nameBox.setAlpha(0);
-	nameBox.foreColor = infoPanel_col1;
-	nameBox.font = panelFont_major;
+	nameBox.w = dialog_actor_pict->w;
+	nameBox.h = dialog_actor_pict->h;
+	nameBox.x = 10;
+	nameBox.y = 15;
+	nameBox.printMethod = dialogPortraitPrint;
 	infoPanel.controls.push_back(&nameBox);
 	
 	//Hp and mp text boxes
-	hpBox = nameBox;
-	hpBox.y += hpBox.h + 5;
+	hpBox.x = nameBox.x + nameBox.w + 5;
+	hpBox.h = 20;
+	hpBox.y = nameBox.y;
 	hpBox.w = infoPanel.w / 2 - 7;
+	hpBox.setAlpha(0);
 	hpBox.font = panelFont_minor;
 	hpBox.foreColor = infoPanel_col1;
 	infoPanel.controls.push_back(&hpBox);
 	
 	mpBox = hpBox;
-	mpBox.x = infoPanel.w / 2 + 2;
+	mpBox.y += mpBox.h + 2;
 	infoPanel.controls.push_back(&mpBox);
 	
 	xpBox = hpBox;
-	xpBox.y += xpBox.h + 5;
+	xpBox.x = nameBox.x;
+	xpBox.y = nameBox.y + nameBox.h + 5;
 	infoPanel.controls.push_back(&xpBox);
 	
 	//Statistics text boxes
@@ -3608,7 +3751,7 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 	infoPanel.controls.push_back(&strBox);
 	
 	intBox = strBox;
-	intBox.x = infoPanel.w / 2 + 2;
+	intBox.x += 60;
 	infoPanel.controls.push_back(&intBox);
 	
 	conBox = strBox;
@@ -3622,7 +3765,7 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 	//Effects box
 	effBox = conBox;
 	effBox.y += effBox.h + 20;
-	effBox.w = nameBox.w;
+	effBox.w = infoPanel.w - 40;
 	infoPanel.controls.push_back(&effBox);
 	
 	//Resistance boxes
@@ -3633,8 +3776,9 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 		
 		*t = conBox;
 		t->id = i->id;
-		t->y = effBox.y + effBox.h + 15 + n * (t->h + 1);
-		t->text = t->id;
+		t->x = nameBox.x + nameBox.w + 100;
+		t->y = nameBox.y + 15 + n * (t->h + 1);
+		t->text = i->shownName;
 		
 		infoPanel.controls.push_back(t);
 		resBox.push_back(t);
@@ -3652,6 +3796,21 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 	dialogBox.font = panelFont_minor;
 	dialogBox.foreColor = infoPanel_col1;
 	dialogBox.textAlign = CENTER;
+	
+	dialogBox_actor.x = dialogBox.x + 15;
+	dialogBox_actor.y = dialogBox.y + (dialogBox.h - dialog_actor_pict->h) / 2;
+	dialogBox_actor.w = dialog_actor_pict->w;
+	dialogBox_actor.h = dialog_actor_pict->h;
+	dialogBox_actor.printMethod = dialogPortraitPrint;
+	
+	int i;
+	for (i = 0; i < 4; i++){
+		btn_answers[i] = btn_newGame;
+		btn_answers[i].removeHandler_click(btn_newGame_click);
+		btn_answers[i].y = dialogBox.y + dialogBox.h - btn_answers[i].h - 5;
+		btn_answers[i].id = toString(i);
+		btn_answers[i].addHandler_click(btn_ans_click);
+	}
 	}
 	
 	/*Inventory screen*/{
@@ -3750,13 +3909,13 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 	hp_mp_levelUp.setClickArea();
 	
 	hpUp = btn_use;
-	hpUp.text = "hits +5";
+	hpUp.text = getText("hits") + " +5";
 	hpUp.x = (hp_mp_levelUp.w - hpUp.w) / 2;
 	hpUp.y = hp_mp_levelUp.h / 2 - hpUp.h;
 	hp_mp_levelUp.controls.push_back(&hpUp);
 	
 	mpUp = hpUp;
-	mpUp.text = "mana +5";
+	mpUp.text = getText("mana") + " +5";
 	mpUp.y += mpUp.h;
 	hp_mp_levelUp.controls.push_back(&mpUp);
 	
@@ -3767,7 +3926,7 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 	levelUp_caption.h = hp_mp_levelUp.h;
 	levelUp_caption.x = (hp_mp_levelUp.w - levelUp_caption.w) / 2;
 	levelUp_caption.y = 10;
-	levelUp_caption.text = "LEVEL UP!";
+	levelUp_caption.text = getText("levelUp");
 	levelUp_caption.foreColor = infoPanel_col1;
 	levelUp_caption.font = panelFont_major;
 	levelUp_caption.setAlpha(0);
@@ -3781,22 +3940,22 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 	
 	strUp = hpUp;
 	strUp.x -= strUp.w / 2;
-	strUp.text = "str +1";
+	strUp.text = getText("str_abbr") + " +1";
 	stats_levelUp.controls.push_back(&strUp);
 	
 	conUp = strUp;
 	conUp.y += conUp.h;
-	conUp.text = "con +1";
+	conUp.text = getText("con_abbr") + " +1";
 	stats_levelUp.controls.push_back(&conUp);
 	
 	intUp = strUp;
 	intUp.x += intUp.w;
-	intUp.text = "int +1";
+	intUp.text = getText("int_abbr") + " +1";
 	stats_levelUp.controls.push_back(&intUp);
 	
 	wisUp = intUp;
 	wisUp.y += wisUp.h;
-	wisUp.text = "wis +1";
+	wisUp.text = getText("wis_abbr") + " +1";
 	stats_levelUp.controls.push_back(&wisUp);
 	
 	strUp.addHandler_click(strUp_click);
@@ -3847,6 +4006,7 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 	op int_subt ("-", 0, ops_int_subt);
 	op int_mult ("*", 1, ops_int_mult);
 	op int_div ("/", 1, ops_int_div);
+	op str_concat ("+", 0, ops_str_concat);
 	
 	ops_bool.push_back(bool_equal);
 	ops_bool.push_back(bool_greater);
@@ -3857,6 +4017,7 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 	ops_int.push_back(int_subt);
 	ops_int.push_back(int_mult);
 	ops_int.push_back(int_div);
+	ops_str.push_back(str_concat);
 	}
 }
 
