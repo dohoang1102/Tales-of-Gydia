@@ -977,6 +977,7 @@ class unit: public content{
 	int action;//Action & direction code
 	
 	//Graphics
+	image portrait;//Unit portrait
 	animSet anims;//Unit animations
 	
 	//General information
@@ -2650,14 +2651,14 @@ class campaign: public content{
 			//Sets use button text
 			if (slot_selected != -1 && slot_selected < 11){
 				item* i = player.units[0]->inv[slot_selected];//Selected item
-				if (i && i->itemType == DISPOSABLE) btn_use.text = "use";
-				else if (i) btn_use.text = "equip";
+				if (i && i->itemType == DISPOSABLE) btn_use.text = getText("use");
+				else if (i) btn_use.text = getText("equip");
 			}
 			
 			else if (slot_selected != -1 && slot_selected < 17)
-				btn_use.text = "unequip";
+				btn_use.text = getText("unequip");
 			
-			else btn_use.text = "use";
+			else btn_use.text = getText("use");
 			
 			//Sets info box
 			if (slot_selected != -1){//If there's a selected item
@@ -3670,13 +3671,13 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 		btn_use.setClickArea();
 		btn_use.font = panelFont_minor;
 		btn_use.foreColor = buttons_col;
-		btn_use.text = "use";
+		btn_use.text = getText("use");
 		btn_use.printMethod = buttonPrint;
 		inventoryPanel.controls.push_back(&btn_use);
 		
 		btn_drop = btn_use;
 		btn_drop.y += btn_drop.h;
-		btn_drop.text = "drop";
+		btn_drop.text = getText("drop");
 		inventoryPanel.controls.push_back(&btn_drop);
 		
 		btn_use.addHandler_click(btn_use_click);
