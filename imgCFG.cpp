@@ -22,14 +22,14 @@ int main (int argc, char* argv[]){
 	for (i = 0; i < argc; i++){//For each argument
 		string s = argv[i];
 
-		if (s.size() <= 3) continue;
-		if (s.substr(0,3) == "-if") imgFilePath = s.substr(3);
-		if (s.substr(0,3) == "-of") oFilePath = s.substr(3);
-		if (s.substr(0,3) == "-iw") imgColumns = atoi(s.substr(3).c_str());
-		if (s.substr(0,3) == "-ih") imgRows = atoi(s.substr(3).c_str());
-		if (s.substr(0,3) == "-fw") frameW = atoi(s.substr(3).c_str());
-		if (s.substr(0,3) == "-fh") frameH = atoi(s.substr(3).c_str());
-		if (s.substr(0,3) == "-pf") prefix = s.substr(3);
+		if (s.size() >= 3 && s.substr(0,3) == "-if") imgFilePath = s.substr(3);
+		else if (s.size() >= 3 && s.substr(0,3) == "-of") oFilePath = s.substr(3);
+		else if (s.size() >= 3 && s.substr(0,3) == "-iw") imgColumns = atoi(s.substr(3).c_str());
+		else if (s.size() >= 3 && s.substr(0,3) == "-ih") imgRows = atoi(s.substr(3).c_str());
+		else if (s.size() >= 3 && s.substr(0,3) == "-fw") frameW = atoi(s.substr(3).c_str());
+		else if (s.size() >= 3 && s.substr(0,3) == "-fh") frameH = atoi(s.substr(3).c_str());
+		else if (s.size() >= 3 && s.substr(0,3) == "-pf") prefix = s.substr(3);
+		else if (i != 0) extras += s + " ";
 	}
 	
 	int x, y;//Current frame's x and y coordinates
@@ -64,13 +64,16 @@ int main (int argc, char* argv[]){
 		cin >> frameH;
 	}
 	
-	cout << "Extra options (enter end when done):\n";
-	string t = "";
-	
-	getline(cin, t);
-	while (t != "end"){
-		extras += t + "\n\t";
+	cout << "Current extras: " << extras << endl;
+	if (extras == ""){
+		cout << "Extra options (enter end when done):\n";
+		string t = "";
+
 		getline(cin, t);
+		while (t != "end"){
+			extras += t + "\n\t";
+			getline(cin, t);
+		}
 	}
 	
 	ofstream o (oFilePath.c_str());//Output file
