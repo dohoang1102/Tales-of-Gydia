@@ -66,7 +66,22 @@ int main(int argc, char* argv[]){
 					break;
 					
 					case SDLK_p:
-					if (current.view != LEVELUP_1 && current.view != LEVELUP_2) current.view = EXCHANGE;
+					if (current.view != LEVELUP_1 && current.view != LEVELUP_2){
+						int dX = current.player.units[0]->x, dY = current.player.units[0]->y;
+						
+						switch (GETDIR(current.player.units[0]->action)){
+							case NORTH: dY--; break;
+							case WEST: dX--; break;
+							case SOUTH: dY++; break;
+							case EAST: dX++; break;
+						}
+						
+						if (current.m->getDeco(dX, dY) && itemCount(current.m->getDeco(dX, dY)->inside) > 0){
+							int i;
+							for (i = 0; i < 12; i++) current.exchanging[i] = current.m->getDeco(dX, dY)->inside[i];
+							current.view = EXCHANGE;
+						}
+					}
 					break;
 				}
 			}
@@ -86,7 +101,24 @@ int main(int argc, char* argv[]){
 		
 		if (input) current.turnMoves();
 		current.nextFrame();
-		input = !input;
+		//input = !input;
+		
+		if (current.view == EXCHANGE){
+			int dX = current.player.units[0]->x, dY = current.player.units[0]->y;
+						
+			switch (GETDIR(current.player.units[0]->action)){
+				case NORTH: dY--; break;
+				case WEST: dX--; break;
+				case SOUTH: dY++; break;
+				case EAST: dX++; break;
+			}
+			
+			if (current.m->getDeco(dX, dY) && itemCount(current.m->getDeco(dX, dY)->inside) > 0){
+				int i;
+				for (i = 0; i < 12; i++) current.m->getDeco(dX, dY)->inside[i] = current.exchanging[i];
+				current.view = EXCHANGE;
+			}
+		}
 		
 		curFps = 1000 / (SDL_GetTicks() - lfb);
 		if (SDL_GetTicks() - lfb < 1000 / fps) SDL_Delay(1000 / fps + lfb - SDL_GetTicks());

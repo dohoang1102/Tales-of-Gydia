@@ -45,7 +45,7 @@ int DB_VARIABLEWARNING		= getErrorCode();//Non-lethal variable error in database
 #define OBJTYPE_CAMPAIGN	"campaign"//Object type campaign
 
 //Minimap graphics
-#define MINIMAP_RES			4//Minimap resolution (square size)
+#define MINIMAP_RES			2//Minimap resolution (square size)
 #define MINIMAP_USIZE		3//Minimap unit size
 #define MINIMAP_UCOLOR_0	0x0040FFF0//Minimap unit color for side 0
 #define MINIMAP_UCOLOR_1	0xFF4000F0//Minimap unit color for side 1
@@ -240,7 +240,7 @@ textBox questInfoBox;//Quest info text box
 //Windows: exchange
 panel exchangePanel;//Exchange panel
 imageBox exch_slots [12];//Exchange slot boxes
-button btn_sell;//Sell button
+button btn_sell, btn_buy;//Buy and sell button
 
 //Colors
 Uint32 infoPanel_col1 = 0x000000;//Color for main stuff in info panel
@@ -255,6 +255,7 @@ Uint32 dialog_col = 0xFFFFFF;//Color for dialog boxes
 
 //Boolean operators functions
 string ops_bool_equal(string a, string b){ return toString(a == b); }
+string ops_bool_different (string a, string b){ return toString(a != b); }
 string ops_bool_greater(string a, string b){ return toString(atoi(a.c_str()) > atoi(b.c_str())); }
 string ops_bool_less(string a, string b){ return toString(atoi(a.c_str()) < atoi(b.c_str())); }
 string ops_bool_and(string a, string b){ return toString(atoi(a.c_str()) && atoi(b.c_str())); }
@@ -393,18 +394,6 @@ void quitPrint(SDL_Surface* target, control* p){
 	
 	if (p->getStatus() == VISIBLE) SDL_BlitSurface(button_quit_released, NULL, target, &offset);//Prints normal picture
 	if (p->getStatus() == PRESSED) SDL_BlitSurface(button_quit_pressed, NULL, target, &offset);//Prints pressed picture
-}
-
-//Function to handle slot selection
-void slot_getFocus(control* p){
-	slot_selected = atoi(p->id.c_str());
-}
-
-//Function to handle slot losing selection
-void slot_loseFocus(control* p){
-	control* sel = inventoryPanel.getFocused();
-
-	if (!sel || sel->type != IMAGEBOX) slot_selected = -1;
 }
 
 //Button printing function
@@ -686,6 +675,23 @@ class item: public content {
 		if (imgGiven) overlay.print(target, x, y);//Prints if image was given
 	}
 };
+
+//Function to get item count in inventory
+int itemCount(item* inv[12]){
+	int result = 0;//Result
+	int i;//Counter
+	
+	for (i = 0; i < 12; i++) if (inv[i]) result++;//Increments result if item is not null
+	
+	return result;//Returns result
+}
+
+//Function to get free slot in inventory
+int freeSlot(item* inv[12]){
+	int i;
+	for (i = 0; i < 12; i++) if (inv[i] == NULL) return i;
+	return -1;
+}
 
 //Effect class
 class effect: public content {
@@ -1346,13 +1352,6 @@ class unit: public content{
 		}
 	}
 	
-	//Function to get the first free slot of inventory (or -1 if none)
-	int freeSlot(){
-		int i;
-		for (i = 0; i < 12; i++) if (inv[i] == NULL) return i;
-		return -1;
-	}
-	
 	//Function to give an item (disposable, weapon, clothing) to the unit
 	void giveItem(string id){
 		item *a = (item*) get(&itemDb, id);//Gets item from item database
@@ -1361,7 +1360,7 @@ class unit: public content{
 		
 		if (!a) return;//Exits function if nothing was found
 		
-		int slot = freeSlot();//Gets free slot
+		int slot = freeSlot(inv);//Gets free slot
 		if (slot != -1){//If there's a free slot
 			if (a->itemType == DISPOSABLE){//If item is disposable
 				disposable* d = new disposable;
@@ -1553,7 +1552,7 @@ class unit: public content{
 		list<effect>::iterator e;//Iterator
 		
 		for (e = tempEffects.begin(); e != tempEffects.end(); e++){//For each temporary effect
-			if (e->duration <= 0){ e = tempEffects.erase(e); e--;}//Removes effect if finished
+			if (e->duration <= 0){ e = tempEffects.erase(e); e--; if (hits() > maxHits()) varyHits(0); if (mana() > maxMana()) varyMana(0);}//Removes effect if finished
 			
 			else if (e->duration >= 0) {//Else
 				e->duration--;//Reduces duration by 1
@@ -2279,6 +2278,16 @@ class map: public content{
 		return NULL;//Returns null if no unit was found
 	}
 	
+	//Function to get pointer to deco in tile
+	deco* getDeco(int x, int y){
+		int i;//Counter
+		
+		for (i = 0; i < decos.size(); i++)//For each deco
+			if (decos[i]->x == x && decos[i]->y == y) return decos[i];//Returns deco if matching
+		
+		return NULL;//Returns null if no matching deco was found
+	}
+	
 	//Function to shoot a projectile
 	void shoot(int x, int y, int dir, string pId, unit* owner = NULL){
 		projectile* p = new projectile;//New projectile
@@ -2439,6 +2448,8 @@ class campaign: public content{
 	deque<string> dialogAns[4];//Current dialog answers
 	deque<string> dialogOutVar;//Output variable (used to store answers)
 	
+	item *exchanging [12];//Items being exchanged (items in container/trader)
+	
 	int view;//Current view
 	
 	string questName, questInfo;//Quest name and information strings
@@ -2451,6 +2462,12 @@ class campaign: public content{
 		curSequence = 0;
 		turn = 0;
 		turnCount = 1;
+		
+		questName = "";
+		questInfo = "";
+		
+		int i;
+		for (i = 0; i < 12; i++) exchanging[i] = NULL;
 		
 		view = GAME;
 	}
@@ -2596,6 +2613,7 @@ class campaign: public content{
 		
 		//Exchange view
 		if (view == EXCHANGE){
+			updateExchangePanel();//Updates exchange panel
 			exchangePanel.print(target);//Prints exchange panel
 		}
 	}
@@ -2623,7 +2641,7 @@ class campaign: public content{
 		if (dialogSeq.size() > 0 || view != GAME) return;//Does nothing if there's dialog text or is not in game
 		
 		if (turn == 0 && player.ready()){//If player turn
-			if (!player.moved()) player.getInput();//Gets player input
+			if (!player.moved() && ai.readyOrDead()) player.getInput();//Gets player input
 			if (player.moved() && player.ready() && m->projectiles()) nextTurn();//Goes to AI turn if moved
 		}
 		
@@ -2817,6 +2835,48 @@ class campaign: public content{
 		questInfoBox.text = questInfo;
 	}
 	
+	//Function to update exchange panel
+	void updateExchangePanel(){
+		//Prints inventory boxes
+		int i;
+		for (i = 0; i < 12; i++){
+			if (player.units[0]->inv[i]) inv_slots[i].i = &player.units[0]->inv[i]->icon;
+			else inv_slots[i].i = NULL;
+			
+			if (exchanging[i]) exch_slots[i].i = &exchanging[i]->icon;
+			else exch_slots[i].i = NULL;
+		}
+		
+		//Sets info box
+		if (slot_selected != -1){//If there's a selected item
+			item* it = NULL;//Selected item
+			if (slot_selected < 12) it = player.units[0]->inv[slot_selected];
+			else if (slot_selected > 16) it = exchanging[slot_selected - 17];
+			
+			if (it && (it->shownName != "" || it->description != "")){
+				string typeString;
+				switch (it->itemType){
+					case DISPOSABLE: typeString = getText("item"); break;
+					case WEAPON: typeString = getText("weapon"); break;
+					case SPELL: typeString = getText("spell"); break;
+					case CLOTHING:
+						cloth* c = (cloth*) it;
+						if (c->type == CLOTH_HEAD) typeString = getText("head");
+						else if (c->type == CLOTH_BODY) typeString = getText("body");
+						else if (c->type == CLOTH_LEGS) typeString = getText("legs");
+						break;
+				}
+				
+				itemInfoBox.text = it->shownName + " (" + typeString + ") \\n " + it->description;
+			}
+				
+			else if (it) itemInfoBox.text = getText("noInfoAvailable");
+			else itemInfoBox.text = getText("noItemSelected");
+		}
+		
+		else itemInfoBox.text = getText("noItemSelected");
+	}
+	
 	//Function to check events
 	void events(SDL_Event e){
 		if (view == GAME){
@@ -2831,10 +2891,23 @@ class campaign: public content{
 		else if (view == LEVELUP_1) hp_mp_levelUp.checkEvents(e);
 		else if (view == LEVELUP_2) stats_levelUp.checkEvents(e);
 		else if (view == QUEST) questPanel.checkEvents(e);
+		else if (view == EXCHANGE) exchangePanel.checkEvents(e);
 	}
 } current;
 
 list<campaign> campaignDb;//Campaign database
+
+//Function to handle slot selection
+void slot_getFocus(control* p){
+	slot_selected = atoi(p->id.c_str());
+}
+
+//Function to handle slot losing selection
+void slot_loseFocus(control* p){
+	control* sel = (current.view == INVENTORY ? inventoryPanel.getFocused() : exchangePanel.getFocused());
+
+	if (!sel || sel->type != IMAGEBOX) slot_selected = -1;
+}
 
 //Function to handle use button click
 void btn_use_click(control* p, mouseEvent ev){
@@ -2882,8 +2955,8 @@ void btn_use_click(control* p, mouseEvent ev){
 		}
 	}
 	
-	else if (current.player.units[0]->freeSlot() != -1){//If equipped slot was selected
-		int slot = current.player.units[0]->freeSlot();//First inventory free slot
+	else if (freeSlot(current.player.units[0]->inv) != -1){//If equipped slot was selected
+		int slot = freeSlot(current.player.units[0]->inv);//First inventory free slot
 		
 		if (slot_selected == 12){//If selected head slot
 			current.player.units[0]->inv[slot] = (cloth*) current.player.units[0]->head;
@@ -2916,6 +2989,32 @@ void btn_use_click(control* p, mouseEvent ev){
 void btn_drop_click(control* p, mouseEvent ev){
 	if (slot_selected == -1) return;//Exits function if no slot is selected
 	current.player.units[0]->inv[slot_selected] = NULL;//Removes inventory object
+}
+
+//Function to handle sell button click
+void btn_sell_click(control* p, mouseEvent ev){
+	if (slot_selected > 12) return;
+	
+	int destSlot = freeSlot(current.exchanging);//Destination slot
+	item* sourceSlot = current.player.units[0]->inv[slot_selected];//Source slot
+	
+	if (destSlot != -1 && sourceSlot){//If there's a destination slot and a source item
+		current.exchanging[destSlot] = sourceSlot;
+		current.player.units[0]->inv[slot_selected] = NULL;
+	}
+}
+
+//Function to handle buy button click
+void btn_buy_click(control* p, mouseEvent ev){
+	if (slot_selected < 16) return;
+	
+	int destSlot = freeSlot(current.player.units[0]->inv);//Destination slot
+	item* sourceSlot = current.exchanging[slot_selected - 17];//Source slot
+	
+	if (destSlot != -1 && sourceSlot){//If there's a destination slot and a source item
+		current.player.units[0]->inv[destSlot] = sourceSlot;
+		current.exchanging[slot_selected - 17] = NULL;
+	}
 }
 
 //Function to handle hpUp click
@@ -3269,6 +3368,7 @@ int script::exec(campaign* c){
 			else c->dialogActors.push_back(NULL);//Else adds null actor
 			
 			int n;//Counter
+			bool setAns = false;
 			for (n = 2; n < tokens.size(); n++){
 				if (tokens[n] == "ans"){//Answers
 					if (n + 1 < tokens.size()) c->dialogOutVar.push_back(tokens[n + 1]); else c->dialogOutVar.push_back("");
@@ -3276,8 +3376,17 @@ int script::exec(campaign* c){
 					if (n + 3 < tokens.size()) c->dialogAns[1].push_back(getText(tokens[n + 3])); else c->dialogAns[1].push_back("");
 					if (n + 4 < tokens.size()) c->dialogAns[2].push_back(getText(tokens[n + 4])); else c->dialogAns[2].push_back("");
 					if (n + 5 < tokens.size()) c->dialogAns[3].push_back(getText(tokens[n + 5])); else c->dialogAns[3].push_back("");
+					setAns = true;
 					break;
 				}
+			}
+			
+			if (!setAns){
+				c->dialogOutVar.push_back("");
+				c->dialogAns[0].push_back("");
+				c->dialogAns[1].push_back("");
+				c->dialogAns[2].push_back("");
+				c->dialogAns[3].push_back("");
 			}
 		}
 		}
@@ -3507,26 +3616,37 @@ bool controller::AI(){
 	if (units.size() == 0) return true;//Returns true if there are no units
 	
 	begin:
-	if ((AI_current >= 0 || units[AI_current - 1]->ready() || units[AI_current - 1]->action == ACT_DEAD)/* && (!units[AI_current]->parent || units[AI_current]->parent->projectiles())*/){//If current unit is the first or the previous is ready or dead
-		if (AI_current == units.size()){//If that was last unit
-			AI_current = 0;//Goes back to first unit
+	if ((AI_current == 0 || units[AI_current - 1]->ready() || units[AI_current - 1]->action == ACT_DEAD) && (!units[AI_current]->parent || units[AI_current]->parent->projectiles())){//If current unit is first or the previous is ready or dead and there are no projectiles flying
+		units[AI_current]->AI(false);//Execs current unit's AI function
+		
+		bool last = AI_current == units.size() - 1;//Flag indicating if unit is the last
+		
+		if (!units[AI_current]->moved && !last){//If unit is not the last and didn't move
+			AI_current++;//Next unit
+			goto begin;//Restarts
+		}
+		
+		else if (!units[AI_current]->moved && last){//If unit is the last and didn't move
+			AI_current = 0;//Resets units counter
 			return true;//Returns true
 		}
 		
-		else {//Else
-			units[AI_current]->AI(false);//Execs current unit's AI function
+		else if (units[AI_current]->moved && !last){//If unit is not the last and moved
 			AI_current++;//Next unit
-			
-			if (units[AI_current - 1]->ready() || units[AI_current - 1]->action == ACT_DEAD) goto begin;//Restarts from beginning if unit did nothing
-			return false;//Returns false
+			return false;//Returns true
+		}
+		
+		else if (units[AI_current]->moved && last){//If unit is the last and moved
+			AI_current = 0;//Resets units counter
+			return true;//Returns true
 		}
 	}
 }
 
 //Function to set campaign
 void setCampaign(string id){
-	if (get(&campaignDb, "tutorial")){
-		current = *get(&campaignDb, "tutorial");
+	if (get(&campaignDb, id)){
+		current = *get(&campaignDb, id);
 		current.setup();
 	}
 }
@@ -3623,9 +3743,6 @@ void loadDatabase(object o){
 			else *get(&locales, i->name) += newLoc;//Else adds locale to previous
 		}
 	}
-	
-	cout << "Loaded successfully!" << endl;
-	cout << terrainDb.size() << " terrains\n" << mapDb.size() << " maps\n" << unitDb.size() << " units\n" << weaponDb.size() << " weapons\n" << clothDb.size() << " cloths\n" << decoDb.size() << " decos\n" << campaignDb.size() << " campaigns\n";
 }
 
 //Initialization function
@@ -4045,19 +4162,37 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 	exchangePanel.printMethod = bigPanelPrint;
 	exchangePanel.setClickArea();
 	
+	btn_sell = btn_use;
+	btn_sell.removeHandler_click(btn_use_click);
+	btn_sell.x = (exchangePanel.w - btn_sell.w) / 2;
+	btn_sell.y = 10 + ((slot_pict->h * 3) - (btn_sell.h * 2 + 5)) / 2;
+	btn_sell.text = ">";
+	exchangePanel.controls.push_back(&btn_sell);
+	
+	btn_buy = btn_sell;
+	btn_buy.y += btn_buy.h + 5;
+	btn_buy.text = "<";
+	exchangePanel.controls.push_back(&btn_buy);
+	
+	btn_sell.addHandler_click(btn_sell_click);
+	btn_buy.addHandler_click(btn_buy_click);
+	
 	int i;
 	for (i = 0; i < 12; i++){
-		exchangePanel.controls.push_back(&inv_slots[i]);
-		
 		exch_slots[i] = inv_slots[i];
-		exch_slots[i].id = toString(atoi(inv_slots[i].id.c_str()) * 2);
+		exch_slots[i].id = toString(atoi(inv_slots[i].id.c_str()) + 17);
 		exch_slots[i].x += exchangePanel.w - 20 - 4 * exch_slots[i].w;
 		exchangePanel.controls.push_back(&exch_slots[i]);
+		
+		exchangePanel.controls.push_back(&inv_slots[i]);
 	}
+	
+	exchangePanel.controls.push_back(&itemInfoBox);
 	}
 	
 	/*Sets operators*/{
 	op bool_equal ("=", 1, ops_bool_equal);
+	op bool_different ("!=", 1, ops_bool_different);
 	op bool_greater (">", 1, ops_bool_greater);
 	op bool_less ("<", 1, ops_bool_less);
 	op bool_and ("&", 0, ops_bool_and);
@@ -4069,6 +4204,7 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 	op str_concat ("+", 0, ops_str_concat);
 	
 	ops_bool.push_back(bool_equal);
+	ops_bool.push_back(bool_different);
 	ops_bool.push_back(bool_greater);
 	ops_bool.push_back(bool_less);
 	ops_bool.push_back(bool_and);

@@ -2,7 +2,6 @@
 
 #include "game.h"
 
-bool running = true;
 SDL_Event e;
 
 textBox prompt;//Command prompt
@@ -111,9 +110,31 @@ void edit(map* m){
 								
 				else if (tokens[0] == "quit") edit = false;
 				
+				else if (tokens[0] == "scshot"){
+					int i;
+					string fPath = "";
+					for (i = 1; i < tokens.size(); i++) fPath += " " + tokens[i];
+					fPath.erase(0,1);
+					
+					SDL_Surface* s = m->pict;
+					m->print(s, s->w / 2, s->h / 2);
+					SDL_SaveBMP(s, fPath.c_str());
+					
+					m->makePict(true);
+				}
+				
 				prompt.text = "";
 				
 				prompt.getFocus();
+			}
+			else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_F1){
+				int mX, mY;
+				SDL_GetMouseState(&mX, &mY);
+				
+				int tX = floor((mX - (window->w / 2 - m->pict->w / 2 + oX)) / tilesSide);
+				int tY = floor((mY - (window->h / 2 - m->pict->h / 2 + oY)) / tilesSide);
+				
+				prompt.text = toString(tX) + "," + toString(tY);
 			}
 			else if (e.type == SDL_MOUSEBUTTONUP){
 				int tX = floor((e.button.x - (window->w / 2 - m->pict->w / 2 + oX)) / tilesSide);
@@ -183,7 +204,7 @@ void edit(map* m){
 			
 			o.y += tilesSide + 5;
 			
-			if (i > window->h / (tilesSide + 5)){
+			if (o.y > window->h){
 				o.y = tilesSide / 2 + 5;
 				o.x -= tilesSide + 5;
 			}
@@ -210,7 +231,7 @@ void edit(map* m){
 }
 
 int main(int argc, char* argv[]){
-	string dbFile = "data\\cfg\\db.cfg", settingsFile = "data\\cfg\\settings.cfg";//Tileset file and settings file
+	string dbFile = "data\\cfg\\db.cfg", settingsFile = "data\\cfg\\settings.cfg", themeFile = "data\\cfg\\theme.cfg";//Tileset file and settings file
 	
 	int oldX = -1, oldY = -1, oldLayer = -1; string oldTerrain = "";//Old data to undo
 	
@@ -222,12 +243,12 @@ int main(int argc, char* argv[]){
 		
 		if (a.substr(0,2) == "-d") dbFile = a.substr(2);
 		if (a.substr(0,2) == "-s") settingsFile = a.substr(2);
+		if (a.substr(0,3) == "-t") themeFile = a.substr(2);
 	}
 	
 	
 	
-	game_init(dbFile, settingsFile);
-	initWindow(800,600,"Tales of Gydia - map editor");
+	game_init(dbFile, settingsFile, themeFile);
 	
 	
 	
@@ -244,11 +265,12 @@ int main(int argc, char* argv[]){
 	prompt.getFocus();
 	
 	
-	activeMap.resize(5,5);
-	activeMap.fill("dirt",0);
-	activeMap.makePict(true);
-	activeMap.makeMmap();
-	edit(&activeMap);
+	current.m = new map;
+	current.m->resize(5,5);
+	current.m->fill("dirt",0);
+	current.m->makePict(true);
+	current.m->makeMmap();
+	edit(current.m);
 	
 	
 	return 0;

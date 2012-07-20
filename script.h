@@ -322,11 +322,11 @@ void object::fromStrings(string type, string name, deque<string> lines){
 			tok = strtok(NULL, " \t");//Next token
 		}
 		
-		if (tokens.size() >= 3 && strcmp(tokens[1].c_str(), "=") == 0){//Variable assignment
+		if (tokens.size() >= 3 && tokens[1] == "="){//Variable assignment
 			setVar(tokens[0], ln.substr(ln.find(tokens[2])));//Sets the variable
 		}
 		
-		else if (tokens.size() >= 3 && strcmp(tokens[2].c_str(), "{") == 0){//Object declaration
+		else if (tokens.size() >= 3 && tokens[2] == "{"){//Object declaration
 			object newObj;//New object
 			
 			deque<string> subLines;//Lines of the sub-object
@@ -352,13 +352,13 @@ void object::fromStrings(string type, string name, deque<string> lines){
 			i = j;//Next line
 		}
 		
-		else if (tokens.size() >= 2 && strcmp(tokens[0].c_str(), "file") == 0){//File insertion
+		else if (tokens.size() >= 2 && tokens[0] == "file"){//File insertion
 			fileData f (ln.substr(ln.find(tokens[1])));//New file
 			*this += f.objGen(tokens[1]);//Adds the content of the file to the object
 		}
 		
 		#ifdef _ERROR//If the error handling file has been included
-			else if (errFunc)//If there's an error function and the line is unresolved
+			else if (tokens.size() > 0 && errFunc)//If there's an error function and the line is unresolved
 				errFunc(SCRIPT_WARNING_UNRESOLVEDLINE, "[script.h] Unresolved line " + name + ":" + toString(lCount) + ":" + ln);//Calls error function 
 		#endif
 	}
