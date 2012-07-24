@@ -974,6 +974,8 @@ class deco: public content{
 	bool free_air;//Air free flag
 	int x, y;//Coords of deco
 	
+	bool container;//Container flag (enables exchange with item)
+	
 	item *inside [12];//Items inside decoration
 	
 	//Constructor
@@ -985,6 +987,8 @@ class deco: public content{
 		
 		int i;
 		for (i = 0; i < 12; i++) inside[i] = NULL;
+		
+		container = false;
 	}
 	
 	//Function to load from script object
@@ -996,10 +1000,18 @@ class deco: public content{
 			var* free_air = o.getVar("free_air");//Air free flag
 			object* i = o.getObj("image");//Image flag
 			var* inside = o.getVar("content");//Content variable
+			var* x = o.getVar("x");//X variable
+			var* y = o.getVar("y");//Y variable
+			var* container = o.getVar("container");//Container variable
+			
+			if (x) this->x = x->intValue();
+			if (y) this->y = y->intValue();
 			
 			if (free) this->free = free->intValue();//Gets free flag
 			if (free_air) this->free_air = free_air->intValue();//Gets air free flag
 			if (i) this->i.fromScriptObj(*i);//Gets image
+			
+			if (container) this->container = container->intValue();//Gets container flag
 			
 			if (inside){//If there's an inside variable
 				deque<string> tokens = tokenize(inside->value, ", \t");//Splits content
@@ -1010,6 +1022,31 @@ class deco: public content{
 			}
 			
 		}
+	}
+	
+	//Function to save to script object
+	object toScriptObj(){
+		object result;//Result
+		
+		result.name = id;
+		result.type = OBJTYPE_DECO;
+		
+		result.setVar("free", free);
+		result.setVar("free_air", free_air);
+		result.setVar("container", container);
+		
+		result.setVar("x", x);
+		result.setVar("y", y);
+		
+		result.o.push_back(i.toScriptObj());
+		
+		string contentVar = "";
+		int n;
+		for (n = 0; n < 12; n++) if (inside[n]) contentVar += "," + inside[n]->id;
+		contentVar.erase(0,1);
+		result.setVar("content", contentVar);
+		
+		return result;
 	}
 	
 	//Print function
@@ -1172,16 +1209,40 @@ class unit: public content{
 			content::fromScriptObj(o);//Loads base content data
 			
 			object* anims = o.getObj("anims");//AnimSet object
+			var* name = o.getVar("name");//Name
+			var* side = o.getVar("side");//Side
+			
+			var* x = o.getVar("x");//X coord
+			var* y = o.getVar("y");//Y coord
+			
+			var* curHits = o.getVar("curHits");//Current hits
 			var* hits = o.getVar("hits");//Hits variable
+			var* curMana = o.getVar("curMana");//Current mana
 			var* mana = o.getVar("mana");//Mana variable
+			
 			var* strength = o.getVar("strength");//Strength variable
 			var* intelligence = o.getVar("intelligence");//Intelligence variable
 			var* constitution = o.getVar("constitution");//Constitution variable
 			var* wisdom = o.getVar("wisdom");//Wisdom variable
+			
 			var* sight = o.getVar("sight");//Sight variable
 			var* flying = o.getVar("flying");//Flying variable
 			var* xpReward = o.getVar("xpReward");//XP reward
 			object* portrait = o.getObj("portrait");//Unit portrait
+			
+			var* level = o.getVar("level");//Level variable
+			var* xp = o.getVar("xp");//Xp variable
+			
+			var* wearing = o.getVar("wearing");//Unit clothes
+			var* primary = o.getVar("primary");//Unit primary weapon
+			var* spell = o.getVar("spell");//Unit spell
+			var* inventory = o.getVar("inventory");//Unit inventory
+			
+			if (name) this->name = name->value;//Sets name
+			if (side) this->side = side->intValue();//Sets side
+			
+			if (x) this->x = x->intValue();
+			if (y) this->y = y->intValue();
 			
 			if (anims) this->anims.fromScriptObj(*anims);//Loads animations
 			if (hits) this->baseMaxHits = hits->intValue();//Gets max hits
@@ -1197,12 +1258,35 @@ class unit: public content{
 			if (flying) this->flying = flying->intValue();//Gets flying
 			
 			if (xpReward) this->xpReward = xpReward->intValue();//Gets xp reward
+			if (level) this->level = level->intValue();//Gets level
+			if (xp) this->xp = xp->intValue();//Gets xp
 			
 			if (portrait) this->portrait.fromScriptObj(*portrait);//Gets portrait
 			
+			if (wearing){//If clothes were specified
+				deque<string> toks = tokenize(wearing->value, " \t,");//Tokens of wearing variable
+				
+				int i;//Counter
+				for (i = 0; i < toks.size(); i++) wear(toks[i]);//Wears given object
+			}
+			
+			if (primary) giveWeapon_primary(primary->value);//Gives primary weapon
+			if (spell) giveSpell(spell->value);//Gives spell
+			
+			if (inventory){//If inventory was specified
+				deque<string> toks = tokenize(inventory->value, " \t,");//Tokens of inventory variable
+				
+				int i;//Counter
+				for (i = 0; i < toks.size(); i++) giveItem(toks[i]);//Gives object to unit
+			}
+			
 			this->anims.setAnim("idle_s");//Turns south
-			this->baseHits = this->baseMaxHits;//Sets hits
-			this->baseMana = this->baseMaxMana;//Sets mana
+			
+			if (curHits) this->baseHits = curHits->intValue();//Sets curren hits
+			else this->baseHits = this->baseMaxHits;//Sets hits
+			
+			if (curMana) this->baseMana = curMana->intValue();//Sets current mana
+			else this->baseMana = this->baseMaxMana;//Sets mana
 			
 			deque<object>::iterator i;//Sub object iterator
 			for (i = o.o.begin(); i != o.o.end(); i++){//For each sub-object
@@ -1338,6 +1422,14 @@ class unit: public content{
 		if(get(&weaponDb, id)) *w = *get(&weaponDb, id);//Sets weapon
 		
 		primary = w;//Sets primary weapon
+	}
+	
+	//Function to give spell to unit
+	void giveSpell(string id){
+		weapon *w = new weapon;
+		if(get(&weaponDb, id)) *w = *get(&weaponDb, id);//Sets weapon
+		
+		spell = w;//Sets spell
 	}
 	
 	//Function to wear generic cloth
@@ -1568,6 +1660,52 @@ class unit: public content{
 	void xpGain(int amount){
 		xp += amount;//Adds xp
 	}
+	
+	//Function to convert to script object
+	object toScriptObj(){
+		object result;//Result object
+		
+		result.type = OBJTYPE_UNIT;
+		result.name = id;
+		
+		result.setVar("name", name);
+		result.setVar("side", side);
+		
+		result.setVar("x", x);
+		result.setVar("y", y);
+		
+		result.setVar("curHits", baseHits);
+		result.setVar("hits", baseMaxHits);
+		result.setVar("curMana", baseMana);
+		result.setVar("mana", baseMaxMana);
+		
+		result.setVar("strength", baseStrength);
+		result.setVar("constitution", baseConstitution);
+		result.setVar("intelligence", baseIntelligence);
+		result.setVar("wisdom", baseWisdom);
+		
+		result.setVar("sight", sight);
+		result.setVar("flying", flying);
+		
+		result.setVar("xpReward", xpReward);
+		result.setVar("level", level);
+		result.setVar("xp", xp);
+		
+		result.setVar("wearing", (head ? head->id : "") + "," + (body ? body->id : "") + "," + (legs ? legs->id : ""));
+		result.setVar("primary", (primary ? primary->id : ""));
+		result.setVar("spell", (spell ? spell->id : ""));
+		
+		int i;//Counter
+		string invVar = "";//Inventory variable
+		for (i = 0; i < 12; i++) if (inv[i]) invVar += "," + inv[i]->id;//Adds item to inventory
+		invVar.erase(0, 1);//Erases first comma
+		result.setVar("inventory", invVar);//Sets inventory variable
+		
+		result.o.push_back(portrait.toScriptObj());
+		result.o.push_back(anims.toScriptObj());
+		
+		return result;
+	}
 };
 
 //Function determining if an unit comes before another one (lower y or equal y and lower x)
@@ -1700,6 +1838,8 @@ class map: public content{
 	deque<deco*> decos;//Decorations on map
 	deque<projectile*> projs;//Projectiles on map
 	
+	string ai;//Ai controlled units
+	
 	//Constructor
 	map(){
 		id = "";
@@ -1711,6 +1851,8 @@ class map: public content{
 		mmap = NULL;
 		
 		resize(1,1);
+		
+		ai = "";
 	}
 	
 	//Function to resize the map
@@ -1738,6 +1880,7 @@ class map: public content{
 	//Function to get map width
 	int width() {return w;}
 	
+	//Function to get map height
 	int height() {return h;}
 	
 	//Function to print the map
@@ -1944,6 +2087,33 @@ class map: public content{
 		return NULL;//Returns null if failed
 	}
 	
+	//Function to create an AI unit on map
+	unit* createAI(string id, string name, int x, int y, int side){
+		unit* u = get(&unitDb, id);//Required unit
+		
+		if (u && isFree(x, y, u->flying)){//If unit exists and tile is free
+			unit* newUnit = new unit;//Unit to add
+			*newUnit = *u;//Copies unit
+			
+			//Sets unit data
+			newUnit->name = name;
+			newUnit->x = x;
+			newUnit->y = y;
+			newUnit->side = side;
+			newUnit->parent = this;
+			
+			units.push_back(newUnit);//Adds unit to map
+			sortUnits();//Sorts map units
+			
+			if (ai == "") ai = name;
+			else ai += "," + name;
+			
+			return newUnit;//Returns new unit
+		}
+		
+		return NULL;//Returns null if failed
+	}
+	
 	//Function to create a deco on map
 	deco* createDeco(string id, int x, int y){
 		deco* d = get(&decoDb, id);//Required deco
@@ -2058,8 +2228,10 @@ class map: public content{
 			var* h = o.getVar("h");//Height variable
 			var* tiles = o.getVar("tiles");//Tiles variable
 			var* decos = o.getVar("decos");//Decos variable
+			var* ai = o.getVar("ai");//Ai variable
 			
 			if (w && h) resize(atoi(w->value.c_str()), atoi(h->value.c_str()));//Sets map size
+			if (ai) this->ai = ai->value;//Sets ai variable
 			
 			if (tiles){//If tiles variable was given
 				char* c = (char*) tiles->value.c_str();//C-string version of tiles
@@ -2114,6 +2286,22 @@ class map: public content{
 					createDeco(dId, dX, dY);//Creates deco
 					
 					tok = strtok(NULL, ",\t ");//Next token
+				}
+			}
+			
+			deque<object>::iterator i;//Object iterator
+			for (i = o.o.begin(); i != o.o.end(); i++){//For each sub-object
+				if (i->type == OBJTYPE_UNIT){//If object is an unit
+					unit *u = new unit;//New unit
+					u->fromScriptObj(*i);//Loads unit from object
+					u->parent = this;
+					units.push_back(u);//Adds unit to map
+				}
+				
+				if (i->type == OBJTYPE_DECO){//If object is a deco
+					deco* d = new deco;//New deco
+					d->fromScriptObj(*i);//Loads deco from object
+					this->decos.push_back(d);//Adds deco to map
 				}
 			}
 			
@@ -2252,17 +2440,21 @@ class map: public content{
 		result.setVar("w", w);
 		result.setVar("h", h);
 		
+		result.setVar("ai", ai);//Sets ai variable
+		
 		string tilesVar = "";//Tiles variable content
 		int i;//Counter
 		for (i = 0; i < w * h; i++) tilesVar += "," + tiles[i].id + ":" + toString(tiles[i].layer);//Writes tile info
 		tilesVar.erase(0,1);//Deletes first comma in tiles variable
 		
-		string decosVar = "";//Decos variable content
-		for (i = 0; i < decos.size(); i++) decosVar += "," + decos[i]->id + ":" + toString(decos[i]->x) + ":" + toString(decos[i]->y);//Writes deco info
-		decosVar.erase(0,1);//Deletes first comma in decos variable
-		
 		result.setVar("tiles", tilesVar);//Sets tiles variable
-		result.setVar("decos", decosVar);//Sets decos variable
+		
+		int n;//Counter
+		for (n = 0; n < units.size(); n++)//For each unit
+			result.o.push_back(units[n]->toScriptObj());//Adds unit object to result
+		
+		for (n = 0; n < decos.size(); n++)//For each deco
+			result.o.push_back(decos[n]->toScriptObj());//Adds deco object to result		
 		
 		return result;//Returns result
 	}
@@ -2328,6 +2520,15 @@ class script {
 		}
 	}
 	
+	//Function to convert to string
+	string scriptToString(){
+		string result = "";
+		int i;
+		for (i = 0; i < cmds.size(); i++) result += ",\n" + cmds[i];
+		result.erase(0, 2);
+		return result;
+	}
+	
 	//Execution function - campaign
 	int exec(campaign* c);
 };
@@ -2335,6 +2536,7 @@ class script {
 //Event class
 class event {
 	public:
+	string id;
 	script control;//Event control script (must return true to trigger event)
 	script action;//Action script, triggered when control script is verified
 	
@@ -2348,6 +2550,8 @@ class event {
 	//Function to load from script object
 	void fromScriptObj(object o){
 		if (o.type == OBJTYPE_EVENT){//If type is matching
+			id = o.name;
+			
 			var* control = o.getVar("script_control");//Control script variable
 			var* action = o.getVar("script_action");//Action script variable
 			
@@ -2359,11 +2563,28 @@ class event {
 			if (triggerOnce && triggerOnce->intValue()) flags |= EVENT_ONCE;//Trigger once flag
 		}
 	}
+	
+	//Function to convert to script object
+	object toScriptObj(){
+		object result;
+		
+		result.name = id;
+		result.type = OBJTYPE_EVENT;
+		
+		result.setVar("script_control", control.scriptToString());
+		result.setVar("script_action", action.scriptToString());
+		
+		if (flags & EVENT_ONCE) result.setVar("triggerOnce", 1);
+		
+		return result;
+	};
 };
 
 //Sequence class
 class sequence: public content{
 	public:
+	string id;
+	
 	script begin;//Begin script, executed when starting sequence
 	script end;//End script, executed when finishing sequence
 	
@@ -2374,6 +2595,7 @@ class sequence: public content{
 		if (o.type == OBJTYPE_SEQUENCE){//If type is matching
 			content::fromScriptObj(o);//Loads base content data
 			
+			id = o.name;
 			var* begin = o.getVar("script_begin");//Begin script variable
 			var* end = o.getVar("script_end");//End script variable
 			
@@ -2389,6 +2611,22 @@ class sequence: public content{
 				}
 			}
 		}
+	}
+	
+	//Function to convert to script object
+	object toScriptObj(){
+		object result;
+		
+		result.name = id;
+		result.type = OBJTYPE_SEQUENCE;
+	
+		result.setVar("script_begin", begin.scriptToString());
+		result.setVar("script_end", end.scriptToString());
+		
+		list<event>::iterator i;
+		for (i = events.begin(); i != events.end(); i++) result.o.push_back(i->toScriptObj());
+		
+		return result;
 	}
 	
 	//Function to check all sequence events
@@ -2429,7 +2667,8 @@ class uQuery {
 //Campaign class
 class campaign: public content{
 	public:
-	map* m;//Campaign map
+	deque<map*> maps;//Campaign maps
+	map* m;//Current map
 	
 	controller player;//Player controller
 	controller ai;//AI controller
@@ -2438,6 +2677,7 @@ class campaign: public content{
 	deque<uQuery> queries;//Unit queries
 	
 	deque<sequence> seq;//Sequences of campaign, in order of execution
+	deque<event> globalEvents;//Global campaign events
 	int curSequence;//Current sequence index
 	
 	int turnCount;//Turn count
@@ -2452,7 +2692,7 @@ class campaign: public content{
 	
 	int view;//Current view
 	
-	string questName, questInfo;//Quest name and information strings
+	string questName, questInfo;//Quest name and information string
 	
 	deque<var> variables;//Campaign global variables
 	
@@ -2478,8 +2718,14 @@ class campaign: public content{
 			content::fromScriptObj(o);//Loads base content data
 			
 			var* m = o.getVar("map");//Map variable
+			var* curSeq = o.getVar("curSequence");//Current sequence variable
+			var* questName = o.getVar("questName");//Current quest name
+			var* questInfo = o.getVar("questInfo");//Current quest info
+			var* player = o.getVar("player");//Player unit name
 			
-			if (m) this->m = get(&mapDb, m->value);//Gets map
+			if (questName) this->questName = questName->value;
+			if (questInfo) this->questInfo = questInfo->value;
+			if (curSeq) this->curSequence = curSeq->intValue();//Gets current sequence
 			
 			deque<object>::iterator i;//Sub-object iterator
 			for (i = o.o.begin(); i != o.o.end(); i++){//For each sub-object in given object
@@ -2488,8 +2734,73 @@ class campaign: public content{
 					newSeq.fromScriptObj(*i);//Loads sequence
 					seq.push_back(newSeq);//Adds sequence to campaign sequences
 				}
+				
+				if (i->type == OBJTYPE_MAP){//If object is a map
+					map* newM = new map;//New map
+					newM->fromScriptObj(*i);//Loads map
+					maps.push_back(newM);//Adds map to campaign maps
+				}
+				
+				if (i->type == OBJTYPE_EVENT){//If object is an event
+					event newEvent;//New event
+					newEvent.fromScriptObj(*i);//Loads event
+					globalEvents.push_back(newEvent);//Adds event to global events
+				}
+			}
+			
+			if (m) this->m = get_ptr(&maps, m->value);//Gets map
+			
+			if (player) if (this->m->getUnit_name(player->value)) this->player.addUnit(this->m->getUnit_name(player->value));//Adds player unit
+			
+			//Sets AI units
+			deque<string> toks = tokenize(this->m->ai, " \t,");//Tokenizes variable
+			int n;//Counter
+			for (n = 0; n < toks.size(); n++) if (this->m->getUnit_name(toks[n])) this->ai.addUnit(this->m->getUnit_name(toks[n]));//Adds unit to AI controller
+			
+			deque<var>::iterator j;//Variable iterator
+			for (j = o.v.begin(); j != o.v.end(); j++){//For each variable in object
+				if (j->name.substr(0, 6) == "query_"){//If variable is a query
+					deque<string> toks = tokenize(j->value, " \t,");//String tokens
+					
+					uQuery newQuery;//New query
+					
+					int n;//Counter
+					for (n = 0; n < toks.size(); n++)//For each token
+						if (this->m->getUnit_name(toks[n])) newQuery.units.push_back(this->m->getUnit_name(toks[n]));//Adds unit to query
+						
+					queries.push_back(newQuery);//Adds query
+				}
 			}
 		}
+	}
+	
+	//Function to convert to script object
+	object toScriptObj(){
+		object result;//Result
+		
+		result.name = id;
+		result.type = OBJTYPE_CAMPAIGN;
+		
+		result.setVar("map", m->id);
+		result.setVar("curSequence", curSequence);
+		result.setVar("questName", questName);
+		result.setVar("questInfo", questInfo);
+		result.setVar("player", player.units[0]->name);
+		
+		int n;
+		
+		for (n = 0; n < maps.size(); n++) result.o.push_back(maps[n]->toScriptObj());
+		for (n = 0; n < seq.size(); n++) result.o.push_back(seq[n].toScriptObj());
+		for (n = 0; n < globalEvents.size(); n++) result.o.push_back(globalEvents[n].toScriptObj());
+		for (n = 0; n < queries.size(); n++){
+			string qVar = "";
+			int m;
+			for (m = 0; m < queries[n].units.size(); m++) qVar += "," + queries[n].units[m]->name;
+			qVar.erase(0, 1);
+			result.setVar("query_" + queries[n].id, qVar);
+		}
+		
+		return result;
 	}
 	
 	//Function to count dialog answers
@@ -2630,6 +2941,8 @@ class campaign: public content{
 	
 	//Next frame function
 	void nextFrame(){
+		checkGlobalEvents();//Checks global events
+		
 		if (m && view == GAME){
 			m->nextFrame();//Goes to map next frame if possible
 			seq[curSequence].checkEvents(this);//Checks sequence events
@@ -2647,6 +2960,11 @@ class campaign: public content{
 		
 		if (turn == 1 && player.ready() && ai.readyOrDead() && ai.AI())//When all AI units have been moved
 			nextTurn();//Next turn
+			
+		if (turn == 0 && player.ready()){//If player turn
+			if (!player.moved() && ai.readyOrDead()) player.getInput();//Gets player input
+			if (player.moved() && player.ready() && m->projectiles()) nextTurn();//Goes to AI turn if moved
+		}
 	}
 	
 	//Campaign setup function
@@ -2893,6 +3211,53 @@ class campaign: public content{
 		else if (view == QUEST) questPanel.checkEvents(e);
 		else if (view == EXCHANGE) exchangePanel.checkEvents(e);
 	}
+	
+	//Function to check global events
+	void checkGlobalEvents(){
+		deque<event>::iterator i;//Event iterator
+		
+		for (i = globalEvents.begin(); i != globalEvents.end(); i++){//For each event
+			if (i->control.exec(this) == TRUE){//If control script is verified
+				i->action.exec(this);//Triggers action event
+				
+				if (i->flags & EVENT_ONCE){ i = globalEvents.erase(i); i--; }//Erases event if has to be triggered only once
+			}
+		}
+	}
+	
+	//Function to set map
+	void setMap(string mId, int x, int y){
+		if (get_ptr(&maps, mId)){//If map is available
+			map* oldMap = m;//Old map
+			
+			m = get_ptr(&maps, mId);//Sets map
+			
+			ai.units.clear();//Removes units from AI controller
+			
+			//Sets AI units
+			deque<string> toks = tokenize(this->m->ai, " \t,");//Tokenizes variable
+			int n;//Counter
+			for (n = 0; n < toks.size(); n++) if (this->m->getUnit_name(toks[n])) this->ai.addUnit(this->m->getUnit_name(toks[n]));//Adds unit to AI controller
+			
+			if (player.units.size() > 0){//If there's a player unit
+				player.units[0]->parent = m;//Sets new parent map for player
+				
+				//Sets player position
+				player.units[0]->x = x;
+				player.units[0]->y = y;
+				
+				m->units.push_back(player.units[0]);//Adds unit to new map
+				
+				deque<unit*>::iterator i;//Unit iterator
+				for (i = oldMap->units.begin(); i != oldMap->units.end(); i++){//For each unit in old map
+					if (*i == player.units[0]){//If unit is player
+						oldMap->units.erase(i);//Removes unit from old map
+						break;//Exits loop
+					}
+				}
+			}
+		}
+	}
 } current;
 
 list<campaign> campaignDb;//Campaign database
@@ -3123,13 +3488,16 @@ int script::exec(campaign* c){
 				else if (tokens[j] == "$player.y") tokens[j] = toString(c->player.units[0]->y);
 				
 				else if (tokens[j] == "$player.hits") tokens[j] = toString(c->player.units[0]->hits());
-				if (tokens[j] == "$player.maxHits") tokens[j] = toString(c->player.units[0]->maxHits());
-				if (tokens[j] == "$player.mana") tokens[j] = toString(c->player.units[0]->mana());
-				if (tokens[j] == "$player.maxMana") tokens[j] = toString(c->player.units[0]->maxMana());
-				if (tokens[j] == "$player.strength") tokens[j] = toString(c->player.units[0]->strength());
-				if (tokens[j] == "$player.constitution") tokens[j] = toString(c->player.units[0]->constitution());
-				if (tokens[j] == "$player.intelligence") tokens[j] = toString(c->player.units[0]->intelligence());
-				if (tokens[j] == "$player.wisdom") tokens[j] = toString(c->player.units[0]->wisdom());
+				else if (tokens[j] == "$player.maxHits") tokens[j] = toString(c->player.units[0]->maxHits());
+				else if (tokens[j] == "$player.mana") tokens[j] = toString(c->player.units[0]->mana());
+				else if (tokens[j] == "$player.maxMana") tokens[j] = toString(c->player.units[0]->maxMana());
+				else if (tokens[j] == "$player.strength") tokens[j] = toString(c->player.units[0]->strength());
+				else if (tokens[j] == "$player.constitution") tokens[j] = toString(c->player.units[0]->constitution());
+				else if (tokens[j] == "$player.intelligence") tokens[j] = toString(c->player.units[0]->intelligence());
+				else if (tokens[j] == "$player.wisdom") tokens[j] = toString(c->player.units[0]->wisdom());
+				
+				//Current map info
+				else if (tokens[j] == "$map.id") tokens[j] = c->m->id;
 				
 				//Query info variables [to expand]
 				else if (tokens[j].substr(0, 7) == "$query."){//If variable is related to query
@@ -3258,7 +3626,7 @@ int script::exec(campaign* c){
 			int uY = atoi(tokens[4].c_str());//Unit y
 			int uSide = atoi(tokens[5].c_str());//Unit side
 			
-			unit* u = c->m->createUnit(uId, uName, uX, uY, uSide);//Creates unit in map
+			unit* u = c->m->createAI(uId, uName, uX, uY, uSide);//Creates unit in map
 			if (u){//If created successfully
 				if (tokens.size() >= 7) u->giveWeapon_primary(tokens[6]);//Gives weapon if defined
 				if (tokens.size() >= 8) u->turn(atoi(tokens[7].c_str()));//Picks direction if defined
@@ -3398,6 +3766,12 @@ int script::exec(campaign* c){
 		
 		if (tokens[0] == "questInfo" && tokens.size() >= 2){//Quest info command
 			c->questInfo = getText(tokens[1]);
+		}
+		}
+		
+		/*Map changing*/{
+		if (tokens[0] == "mapChange" && tokens.size() >= 4){
+			c->setMap(tokens[1], atoi(tokens[2].c_str()), atoi(tokens[3].c_str()));
 		}
 		}
 		
@@ -3654,6 +4028,17 @@ void setCampaign(string id){
 //New game click event handler
 void btn_newGame_click(control* p, mouseEvent ev){
 	gamePhase = GAME_PHASE;
+	setCampaign("tutorial");
+}
+
+//Load game click event handler
+void btn_loadGame_click(control* p, mouseEvent ev){
+	gamePhase = GAME_PHASE;
+	
+	fileData f ("data\\cfg\\saves\\continue.cfg");
+	object o = f.objGen("load");
+	o.type = OBJTYPE_CAMPAIGN;
+	current.fromScriptObj(o);
 }
 
 //Quit click event handler
@@ -3849,6 +4234,7 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 	btn_quitMenu.text = getText("quit");
 	
 	btn_newGame.addHandler_click(btn_newGame_click);
+	btn_loadGame.addHandler_click(btn_loadGame_click);
 	btn_quitMenu.addHandler_click(btn_quitMenu_click);
 	}
 	

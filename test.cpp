@@ -32,8 +32,6 @@ int main(int argc, char* argv[]){
 		
 		SDL_Flip(window);
 	}
-	
-	setCampaign("tutorial");
 
 	int curFps = 1;
 	
@@ -76,7 +74,7 @@ int main(int argc, char* argv[]){
 							case EAST: dX++; break;
 						}
 						
-						if (current.m->getDeco(dX, dY) && itemCount(current.m->getDeco(dX, dY)->inside) > 0){
+						if (current.m->getDeco(dX, dY) && current.m->getDeco(dX, dY)->container > 0){
 							int i;
 							for (i = 0; i < 12; i++) current.exchanging[i] = current.m->getDeco(dX, dY)->inside[i];
 							current.view = EXCHANGE;
@@ -99,9 +97,8 @@ int main(int argc, char* argv[]){
 		
 		SDL_Flip(window);
 		
-		if (input) current.turnMoves();
 		current.nextFrame();
-		//input = !input;
+		if (input) current.turnMoves();
 		
 		if (current.view == EXCHANGE){
 			int dX = current.player.units[0]->x, dY = current.player.units[0]->y;
@@ -122,6 +119,12 @@ int main(int argc, char* argv[]){
 		
 		curFps = 1000 / (SDL_GetTicks() - lfb);
 		if (SDL_GetTicks() - lfb < 1000 / fps) SDL_Delay(1000 / fps + lfb - SDL_GetTicks());
+	}
+	
+	if (gamePhase == GAME_PHASE){
+		ofstream svf ("data\\cfg\\saves\\continue.cfg");
+		svf << current.toScriptObj().toString();
+		svf.close();
 	}
 	
 	return 0;

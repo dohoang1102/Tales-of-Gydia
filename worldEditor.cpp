@@ -29,6 +29,7 @@ void edit(map* m){
 	
 	bool mmap = false;//Flag show minimap
 	bool edit = true;
+	bool grid = true;
 	
 	int oX = 0, oY = 0;//Offset
 	
@@ -61,13 +62,13 @@ void edit(map* m){
 				else if (tokens[0] == "new" && tokens.size() >= 4){
 					m->resize(atoi(tokens[1].c_str()), atoi(tokens[2].c_str()));
 					m->fill(tokens[3], 0);
-					m->makePict(true);
+					m->makePict(grid);
 					m->makeMmap();
 				}
 				
 				else if (tokens[0] == "fill" && tokens.size() >= 3){
 					m->fill(tokens[1], atoi(tokens[2].c_str()));
-					m->makePict(true);
+					m->makePict(grid);
 					m->makeMmap();
 				}
 				
@@ -84,8 +85,13 @@ void edit(map* m){
 				
 				else if (tokens[0] == "undo" && oldX != -1){
 					m->setTile(oldX, oldY, oldTerrain, oldLayer);
-					m->makePict(true);
+					m->makePict(grid);
 					m->makeMmap();
+				}
+				
+				else if (tokens[0] == "grid"){
+					grid = !grid;
+					m->makePict(grid);
 				}
 				
 				else if (tokens[0] == "mmap") mmap = !mmap;
@@ -105,7 +111,7 @@ void edit(map* m){
 				
 				else if (tokens[0] == "open" && tokens.size() >= 1){
 					if (get(&mapDb, tokens[1])) m = get(&mapDb, tokens[1]);
-					m->makePict(true);
+					m->makePict(grid);
 				}
 								
 				else if (tokens[0] == "quit") edit = false;
@@ -120,7 +126,7 @@ void edit(map* m){
 					m->print(s, s->w / 2, s->h / 2);
 					SDL_SaveBMP(s, fPath.c_str());
 					
-					m->makePict(true);
+					m->makePict(grid);
 				}
 				
 				prompt.text = "";
@@ -148,13 +154,13 @@ void edit(map* m){
 						oldTerrain = m->getTile(tX, tY)->id;
 						
 						m->setTile(tX, tY, brush, brushLayer);
-						m->makePict(true);
+						m->makePict(grid);
 						m->makeMmap();
 					}
 					
 					else if (e.button.button == SDL_BUTTON_LEFT && mode == 1){
 						m->createDeco(brush, tX, tY);
-						m->makePict(true);
+						m->makePict(grid);
 					}
 					
 					else if (e.button.button == SDL_BUTTON_RIGHT && mode == 0){
@@ -164,12 +170,12 @@ void edit(map* m){
 					
 					else if (e.button.button == SDL_BUTTON_RIGHT && mode == 1){
 						m->removeDeco(tX, tY);
-						m->makePict(true);
+						m->makePict(grid);
 					}
 					
 					else if (e.button.button == SDL_BUTTON_MIDDLE && mode == 0){
 						bucketFill(m, tX, tY, brush, brushLayer);
-						m->makePict(true);
+						m->makePict(grid);
 						m->makeMmap();
 					}
 				}

@@ -38,6 +38,20 @@ class image;//Image class prototype
 		
 		return SDL_Rect {0,0,0,0};
 	}
+	
+	//Function to convert rectangle to script object
+	object rectToObj(SDL_Rect r, string name){
+		object result;//Result
+		
+		result.name = name;
+		result.type = OBJTYPE_RECT;
+		result.setVar("x", r.x);
+		result.setVar("y", r.y);
+		result.setVar("w", r.w);
+		result.setVar("h", r.h);
+		
+		return result;
+	}
 #endif
 
 #ifdef _ERROR
@@ -83,7 +97,10 @@ int image_init(){
 class image{
 	public:
 	string id;//Id of the image
+	
 	SDL_Surface* img;//Surface of the image
+	string imageFile;//Image file
+	
 	SDL_Rect rect;//Portion of the image to print
 	
 	int cShiftX, cShiftY;//Shift the center (reference when printing)
@@ -120,6 +137,8 @@ class image{
 				id = o.name;//The id is the name of the object
 				
 				if (fileName){
+					imageFile = fileName->value;
+					
 					#ifdef _CACHE//If the cache handling header has been included
 					img = CACHEDIMG(fileName->value);//Loads the image from the cache
 					#else
@@ -137,6 +156,22 @@ class image{
 			#ifdef _ERROR
 				else if (errFunc) errFunc(SCRIPT_WARNING_INVALIDOBJTYPE, "[image.h] No image could be loaded from " + o.type + " object");
 			#endif
+		}
+		
+		//Function to convert to script object
+		object toScriptObj(){
+			object result;//Result
+			
+			result.name = id;
+			result.type = OBJTYPE_IMAGE;
+			
+			result.setVar("image", imageFile);
+			result.setVar("cShiftX", cShiftX);
+			result.setVar("cShiftY", cShiftY);
+			
+			result.o.push_back(rectToObj(rect, "rect"));
+			
+			return result;
 		}
 	#endif
 };
@@ -220,6 +255,24 @@ class anim{
 			#ifdef _ERROR
 				else if (errFunc) errFunc(SCRIPT_WARNING_INVALIDOBJTYPE, "[image.h] No animation could be loaded from " + o.type + " object");
 			#endif
+		}
+		
+		//Function to convert to script object
+		object toScriptObj(){
+			object result;//Result
+			
+			result.type = OBJTYPE_ANIM;
+			result.name = id;
+			
+			int i;
+			for (i = 0; i < frames.size(); i++) result.o.push_back(frames[i].toScriptObj());
+			
+			string seqVar = "";
+			for (i = 0; i < sequence.size(); i++) seqVar += "," + sequence[i];
+			seqVar.erase(0, 1);
+			result.setVar("sequence", seqVar);
+			
+			return result;
 		}
 	#endif
 	
@@ -310,6 +363,19 @@ class animSet{
 			#ifdef _ERROR
 				else if (errFunc) errFunc(SCRIPT_WARNING_INVALIDOBJTYPE, "[image.h] No animation set could be loaded from " + o.type + " object");
 			#endif
+		}
+		
+		//Function to convert to script object
+		object toScriptObj(){
+			object result;//Result
+			
+			result.name = id;
+			result.type = OBJTYPE_ANIMSET;
+			
+			int i;
+			for (i = 0; i < anims.size(); i++) result.o.push_back(anims[i].toScriptObj());
+			
+			return result;
 		}
 	#endif
 };
