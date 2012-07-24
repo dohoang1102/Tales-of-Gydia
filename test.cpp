@@ -6,11 +6,13 @@
 int lfb = 0;
 int fps = 30;
 
+Uint8* keys = NULL;
+
 int main(int argc, char* argv[]){
 	bool input = true;
 	SDL_Event e;
 	
-	game_init("data\\cfg\\db.cfg", "data\\cfg\\settings.cfg", "data\\cfg\\theme.cfg");
+	game_init("data/cfg/db.cfg", "data/cfg/settings.cfg", "data/cfg/theme.cfg");
 	
 	while (running && gamePhase == MAIN_MENU) {
 		while (SDL_PollEvent(&e)){
@@ -37,6 +39,7 @@ int main(int argc, char* argv[]){
 	
 	while (running && gamePhase == GAME_PHASE){
 		lfb = SDL_GetTicks();
+		keys = (Uint8*) SDL_GetKeyState(NULL);
 		
 		while (SDL_PollEvent(&e)){
 			if (e.type == SDL_QUIT) running = false;
@@ -81,6 +84,21 @@ int main(int argc, char* argv[]){
 						}
 					}
 					break;
+					
+					case SDLK_r:
+					if (current.view == GAME){
+						int dX = current.player.units[0]->x, dY = current.player.units[0]->y;
+						
+						switch (GETDIR(current.player.units[0]->action)){
+							case NORTH: dY--; break;
+							case WEST: dX--; break;
+							case SOUTH: dY++; break;
+							case EAST: dX++; break;
+						}
+						
+						current.player.units[0]->actX = dX;
+						current.player.units[0]->actY = dY;
+					}
 				}
 			}
 			
@@ -98,7 +116,7 @@ int main(int argc, char* argv[]){
 		SDL_Flip(window);
 		
 		current.nextFrame();
-		if (input) current.turnMoves();
+		if (input) current.turnMoves(keys[SDLK_LSHIFT]);
 		
 		if (current.view == EXCHANGE){
 			int dX = current.player.units[0]->x, dY = current.player.units[0]->y;
@@ -119,10 +137,13 @@ int main(int argc, char* argv[]){
 		
 		curFps = 1000 / (SDL_GetTicks() - lfb);
 		if (SDL_GetTicks() - lfb < 1000 / fps) SDL_Delay(1000 / fps + lfb - SDL_GetTicks());
+		
+		current.player.units[0]->actX = -1;
+		current.player.units[0]->actY = -1;
 	}
 	
 	if (gamePhase == GAME_PHASE){
-		ofstream svf ("data\\cfg\\saves\\continue.cfg");
+		ofstream svf ("data/cfg/saves/continue.cfg");
 		svf << current.toScriptObj().toString();
 		svf.close();
 	}

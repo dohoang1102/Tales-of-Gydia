@@ -22,6 +22,10 @@ void bucketFill(map* m, int x, int y, string brushId, int brushLayer){
 	if (y < m->height() - 1 && m->getTile(x, y + 1)->id == oldId && m->getTile(x, y + 1)->layer == oldLayer) bucketFill(m, x, y + 1, brushId, brushLayer);
 }
 
+void reset (map* m){
+	m->decos.clear();
+}
+
 void edit(map* m){
 	if (!m) return;//Exit if no map passed
 		
@@ -39,14 +43,7 @@ void edit(map* m){
 			
 			if (e.type == SDL_QUIT){ running = false; edit = false; }
 			else if (e.type == SDL_KEYDOWN && (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER) && prompt.isFocused()){//If command was prompted
-				char* cmd = (char*) prompt.text.c_str();//C-string text
-				deque<string> tokens;//Command tokens
-				
-				char* curTok = strtok(cmd, " ");//Current token
-				while (curTok) {//While there are tokens left
-					tokens.push_back(string(curTok));//Adds token
-					curTok = strtok(NULL, " ");//Next token
-				}
+				deque<string> tokens = tokenize(prompt.text, " ");//Command tokens
 				
 				if (tokens[0] == "id" && tokens.size() >= 2) m->id = tokens[1];
 				
@@ -62,6 +59,7 @@ void edit(map* m){
 				else if (tokens[0] == "new" && tokens.size() >= 4){
 					m->resize(atoi(tokens[1].c_str()), atoi(tokens[2].c_str()));
 					m->fill(tokens[3], 0);
+					reset(m);
 					m->makePict(grid);
 					m->makeMmap();
 				}
@@ -72,10 +70,10 @@ void edit(map* m){
 					m->makeMmap();
 				}
 				
-				else if (tokens[0] == "pick" && tokens.size() >= 3){
+				else if (tokens[0] == "pick" && tokens.size() >= 2){
 					mode = 0;
 					brush = tokens[1];
-					brushLayer = atoi(tokens[2].c_str());
+					if (tokens.size() >= 3) brushLayer = atoi(tokens[2].c_str());
 				}
 				
 				else if (tokens[0] == "deco" && tokens.size() >= 2){
@@ -110,7 +108,15 @@ void edit(map* m){
 				}
 				
 				else if (tokens[0] == "open" && tokens.size() >= 1){
-					if (get(&mapDb, tokens[1])) m = get(&mapDb, tokens[1]);
+					if (get(&mapDb, tokens[1])){reset(m); m = get(&mapDb, tokens[1]);}
+					else {
+						fileData f (prompt.text.substr(prompt.text.find(tokens[1])));
+						object db = f.objGen("");
+						
+						int n;
+						for (n = 0; n < db.o.size(); n++)
+							if (db.o[n].type == OBJTYPE_MAP) {reset(m); m->fromScriptObj(db.o[n]); break;}
+					}
 					m->makePict(grid);
 				}
 								
@@ -197,24 +203,6 @@ void edit(map* m){
 		
 		m->print(window, window->w / 2 + oX, window->h / 2 + oY);
 		if (mmap) m->printMmap(window, m->mmap->w / 2 + 5, m->mmap->h / 2 + 5);
-		
-		int i = 0;
-		list<terrain>::iterator t;
-		SDL_Rect o = {window->w - tilesSide / 2 - 5, tilesSide / 2 + 5};
-		for (t = terrainDb.begin(); t != terrainDb.end(); t++, i++){
-			t->print(window, o.x, o.y);
-			
-			if (brush == t->id && mode == 0){
-				boxColor(window, o.x - tilesSide / 2 - 2, o.y - tilesSide / 2 - 2, o.x + tilesSide / 2 + 1, o.y + tilesSide / 2 + 1, 0xFFFFFF5A);
-			}
-			
-			o.y += tilesSide + 5;
-			
-			if (o.y > window->h){
-				o.y = tilesSide / 2 + 5;
-				o.x -= tilesSide + 5;
-			}
-		}
 		
 		SDL_Surface* text = TTF_RenderText_Solid(globalFont, string("Id: " + m->id).c_str(), SDL_Color{255,255,255});
 		SDL_Rect offset = {5, window->h - prompt.h - TTF_FontHeight(globalFont) * 3};

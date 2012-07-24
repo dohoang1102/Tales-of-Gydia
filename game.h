@@ -1126,6 +1126,8 @@ class unit: public content{
 	
 	unit* lastEffectOwner;//Owner of the last effect applied to unit (for XP giving)
 	
+	int actX, actY;//Coords of action
+	
 	//Constructor
 	unit(){
 		id = "";
@@ -1172,6 +1174,9 @@ class unit: public content{
 		flying = false;
 		
 		lastEffectOwner = NULL;
+		
+		actX = -1;
+		actY = -1;
 	}
 	
 	//Unit printing function
@@ -1747,14 +1752,14 @@ class controller{
 	}
 	
 	//Function to get input from keyboard
-	bool getInput(){
+	bool getInput(bool turnOnly = false){
 		Uint8* keys = SDL_GetKeyState(NULL);//Gets key states
 		
 		//Walking orders
-		if (keys[SDLK_w]){ giveOrder({GETACODE(ACT_WALK, NORTH), ""}); return true;}
-		else if (keys[SDLK_a]){ giveOrder({GETACODE(ACT_WALK, WEST), ""}); return true;}
-		else if (keys[SDLK_s]){ giveOrder({GETACODE(ACT_WALK, SOUTH), ""}); return true;}
-		else if (keys[SDLK_d]){ giveOrder({GETACODE(ACT_WALK, EAST), ""}); return true;}
+		if (keys[SDLK_w]){ giveOrder({GETACODE(turnOnly ? ACT_TURN : ACT_WALK, NORTH), ""}); return true;}
+		else if (keys[SDLK_a]){ giveOrder({GETACODE(turnOnly ? ACT_TURN : ACT_WALK, WEST), ""}); return true;}
+		else if (keys[SDLK_s]){ giveOrder({GETACODE(turnOnly ? ACT_TURN : ACT_WALK, SOUTH), ""}); return true;}
+		else if (keys[SDLK_d]){ giveOrder({GETACODE(turnOnly ? ACT_TURN : ACT_WALK, EAST), ""}); return true;}
 		
 		//Striking orders
 		else if (keys[SDLK_q]){ giveOrder({ACT_STRIKE, ""}); return true;}
@@ -2950,11 +2955,11 @@ class campaign: public content{
 	}
 	
 	//Turn moves function
-	void turnMoves(){
+	void turnMoves(bool turnOnly = false){
 		if (dialogSeq.size() > 0 || view != GAME) return;//Does nothing if there's dialog text or is not in game
 		
 		if (turn == 0 && player.ready()){//If player turn
-			if (!player.moved() && ai.readyOrDead()) player.getInput();//Gets player input
+			if (!player.moved() && ai.readyOrDead()) player.getInput(turnOnly);//Gets player input
 			if (player.moved() && player.ready() && m->projectiles()) nextTurn();//Goes to AI turn if moved
 		}
 		
@@ -2962,7 +2967,7 @@ class campaign: public content{
 			nextTurn();//Next turn
 			
 		if (turn == 0 && player.ready()){//If player turn
-			if (!player.moved() && ai.readyOrDead()) player.getInput();//Gets player input
+			if (!player.moved() && ai.readyOrDead()) player.getInput(turnOnly);//Gets player input
 			if (player.moved() && player.ready() && m->projectiles()) nextTurn();//Goes to AI turn if moved
 		}
 	}
@@ -3496,6 +3501,9 @@ int script::exec(campaign* c){
 				else if (tokens[j] == "$player.intelligence") tokens[j] = toString(c->player.units[0]->intelligence());
 				else if (tokens[j] == "$player.wisdom") tokens[j] = toString(c->player.units[0]->wisdom());
 				
+				else if (tokens[j] == "$player.actX") tokens[j] = toString(c->player.units[0]->actX);
+				else if (tokens[j] == "$player.actY") tokens[j] = toString(c->player.units[0]->actY);
+				
 				//Current map info
 				else if (tokens[j] == "$map.id") tokens[j] = c->m->id;
 				
@@ -3771,6 +3779,7 @@ int script::exec(campaign* c){
 		
 		/*Map changing*/{
 		if (tokens[0] == "mapChange" && tokens.size() >= 4){
+			cout << "Setting map " << tokens[1] << endl;
 			c->setMap(tokens[1], atoi(tokens[2].c_str()), atoi(tokens[3].c_str()));
 		}
 		}
