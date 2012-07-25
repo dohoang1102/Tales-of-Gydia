@@ -1863,8 +1863,6 @@ class map: public content{
 	//Function to resize the map
 	//Old tiles are cleared
 	void resize(unsigned int newW, unsigned int newH){
-		if (tiles) delete tiles;//Deletes tiles
-		
 		//Adjust arguments to be at least 1
 		if (newW < 1) newW = 1;
 		if (newH < 1) newH = 1;
@@ -4044,7 +4042,7 @@ void btn_newGame_click(control* p, mouseEvent ev){
 void btn_loadGame_click(control* p, mouseEvent ev){
 	gamePhase = GAME_PHASE;
 	
-	fileData f ("data\\cfg\\saves\\continue.cfg");
+	fileData f ("data/cfg/saves/continue.cfg");
 	object o = f.objGen("load");
 	o.type = OBJTYPE_CAMPAIGN;
 	current.fromScriptObj(o);

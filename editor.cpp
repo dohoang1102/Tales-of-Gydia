@@ -225,7 +225,7 @@ void edit(map* m){
 }
 
 int main(int argc, char* argv[]){
-	string dbFile = "data\\cfg\\db.cfg", settingsFile = "data\\cfg\\settings.cfg", themeFile = "data\\cfg\\theme.cfg";//Tileset file and settings file
+	string dbFile = "data/cfg/db.cfg", settingsFile = "data/cfg/settings.cfg", themeFile = "data/cfg/theme.cfg";//Tileset file and settings file
 	
 	int oldX = -1, oldY = -1, oldLayer = -1; string oldTerrain = "";//Old data to undo
 	
