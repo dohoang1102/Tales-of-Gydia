@@ -43,14 +43,15 @@ int DB_VARIABLEWARNING		= getErrorCode();//Non-lethal variable error in database
 #define OBJTYPE_EVENT		"event"//Object type event
 #define OBJTYPE_SEQUENCE	"sequence"//Object type sequence
 #define OBJTYPE_CAMPAIGN	"campaign"//Object type campaign
+#define OBJTYPE_BATTLE		"battle"//Object type battle
 
 //Minimap graphics
 #define MINIMAP_RES			2//Minimap resolution (square size)
 #define MINIMAP_USIZE		3//Minimap unit size
-#define MINIMAP_UCOLOR_0	0x0040FFF0//Minimap unit color for side 0
-#define MINIMAP_UCOLOR_1	0xFF4000F0//Minimap unit color for side 1
-#define MINIMAP_UCOLOR_2	0x40FF00F0//Minimap unit color for side 2
-#define MINIMAP_UCOLOR_3	0xFF0040F0//Minimap unit color for side 3 (or higher)
+#define MINIMAP_UCOLOR_0	0x0040FF//Minimap unit color for side 0
+#define MINIMAP_UCOLOR_1	0xFF4000//Minimap unit color for side 1
+#define MINIMAP_UCOLOR_2	0x40FF00//Minimap unit color for side 2
+#define MINIMAP_UCOLOR_3	0xFF0040//Minimap unit color for side 3 (or higher)
 
 #define MINIMAP_UCOLOR(SIDE) (SIDE == 0 ? MINIMAP_UCOLOR_0 : (SIDE == 1 ? MINIMAP_UCOLOR_1 : (SIDE == 2 ? MINIMAP_UCOLOR_2 : MINIMAP_UCOLOR_3)))
 
@@ -112,6 +113,10 @@ int DB_VARIABLEWARNING		= getErrorCode();//Non-lethal variable error in database
 #define QUEST				5//Quest info view
 #define EXCHANGE			6//Exchange view
 
+//Controller types
+#define CON_HUMAN			0//Human
+#define CON_AI				1//AI
+
 //Game calculations: damage, mana costs, ...
 #define MINDAMAGE							-1//Minimum damage that can be taken (if calculates lower damage, replaced with this value)
 #define CALC_DAMAGEDEALT(BASE, STAT)		((BASE) * (1 + STAT / 100))//Dealt damage calculation: [base weapon damage] * [strength/intelligence] / 10 - this means: strength = 1 => 10% damage bonus on weapons
@@ -122,6 +127,7 @@ int DB_VARIABLEWARNING		= getErrorCode();//Non-lethal variable error in database
 class unit;//Unit class prototype
 class map;//Map class prototype
 class campaign;//Campaign class prototype
+class battle;//Battle class prototype
 
 typedef struct {int code; string args;} order;//Order structure
 
@@ -145,6 +151,8 @@ int gamePhase = MAIN_MENU;//Game phase
 list <loc> locales;//Installed locales
 string curLoc = "";//Current locale
 string getText(string);//Get text function prototype
+
+Uint8* keys = NULL;//Pressed keys
 
 //User interface
 //Fonts
@@ -1128,6 +1136,9 @@ class unit: public content{
 	
 	int actX, actY;//Coords of action
 	
+	bool highlight;//Unit highlighted
+	Uint32 highlightColor;
+	
 	//Constructor
 	unit(){
 		id = "";
@@ -1177,10 +1188,16 @@ class unit: public content{
 		
 		actX = -1;
 		actY = -1;
+		
+		highlight = false;
+		highlightColor = MINIMAP_UCOLOR(side);
 	}
 	
 	//Unit printing function
 	void print(SDL_Surface* target, int x, int y){
+		//Prints highlight
+		if (highlight) boxColor(target, x - tilesSide / 2 + dX, y - tilesSide / 2 + dY, x + tilesSide / 2 + dX, y + tilesSide / 2 + dY, (highlightColor << 8) + 0x7A);
+		
 		//Prints hitbar
 		if (hits() > 0 && maxHits() > 0){
 			SDL_Rect hitBar = {x + anims.current()->current()->cShiftX - tilesSide / 2 + dX + 2, y + anims.current()->current()->cShiftY + anims.current()->current()->rect.h / 2 + dY, hits() * (tilesSide - 4) / maxHits(), 4};
@@ -1711,6 +1728,36 @@ class unit: public content{
 		
 		return result;
 	}
+	
+	//Assignment operator (copies items instead of pointers to them)
+	void copy (unit u){
+		*this = u;
+		
+		if (u.primary){
+			primary = new weapon;
+			*primary = *u.primary;
+		}
+		
+		if (u.spell){
+			spell = new weapon;
+			*spell = *u.spell;
+		}
+		
+		if (u.head){
+			head = new cloth;
+			*head = *u.head;
+		}
+		
+		if (u.body){
+			body = new cloth;
+			*body = *u.body;
+		}
+		
+		if (u.legs){
+			legs = new cloth;
+			*legs = *u.legs;
+		}
+	}
 };
 
 //Function determining if an unit comes before another one (lower y or equal y and lower x)
@@ -1745,28 +1792,31 @@ class controller{
 	}
 	
 	//Function to give order to all controlled units
-	void giveOrder(order o){
+	void giveOrder(order o, int unitIndex = -1){
+		if (unitIndex < 0 || unitIndex > units.size()){
 		deque<unit*>::iterator u;//Unit iterator
 		for (u = units.begin(); u != units.end(); u++)//For each unit
 			(*u)->execOrder(o);
+		}
+		else units[unitIndex]->execOrder(o);
 	}
 	
 	//Function to get input from keyboard
-	bool getInput(bool turnOnly = false){
+	bool getInput(bool turnOnly = false, int unitIndex = -1){
 		Uint8* keys = SDL_GetKeyState(NULL);//Gets key states
 		
 		//Walking orders
-		if (keys[SDLK_w]){ giveOrder({GETACODE(turnOnly ? ACT_TURN : ACT_WALK, NORTH), ""}); return true;}
-		else if (keys[SDLK_a]){ giveOrder({GETACODE(turnOnly ? ACT_TURN : ACT_WALK, WEST), ""}); return true;}
-		else if (keys[SDLK_s]){ giveOrder({GETACODE(turnOnly ? ACT_TURN : ACT_WALK, SOUTH), ""}); return true;}
-		else if (keys[SDLK_d]){ giveOrder({GETACODE(turnOnly ? ACT_TURN : ACT_WALK, EAST), ""}); return true;}
+		if (keys[SDLK_w]){ giveOrder({GETACODE(turnOnly ? ACT_TURN : ACT_WALK, NORTH), ""}, unitIndex); return true;}
+		else if (keys[SDLK_a]){ giveOrder({GETACODE(turnOnly ? ACT_TURN : ACT_WALK, WEST), ""}, unitIndex); return true;}
+		else if (keys[SDLK_s]){ giveOrder({GETACODE(turnOnly ? ACT_TURN : ACT_WALK, SOUTH), ""}, unitIndex); return true;}
+		else if (keys[SDLK_d]){ giveOrder({GETACODE(turnOnly ? ACT_TURN : ACT_WALK, EAST), ""}, unitIndex); return true;}
 		
 		//Striking orders
-		else if (keys[SDLK_q]){ giveOrder({ACT_STRIKE, ""}); return true;}
-		else if (keys[SDLK_e]){ giveOrder({ACT_SPELL, ""}); return true;}
+		else if (keys[SDLK_q]){ giveOrder({ACT_STRIKE, ""}, unitIndex); return true;}
+		else if (keys[SDLK_e]){ giveOrder({ACT_SPELL, ""}, unitIndex); return true;}
 		
 		//Resting orders
-		else if (keys[SDLK_RETURN]){ giveOrder({ACT_REST, ""}); return true;}
+		else if (keys[SDLK_RETURN]){ giveOrder({ACT_REST, ""}, unitIndex); return true;}
 		
 		return false;
 	}
@@ -2073,7 +2123,7 @@ class map: public content{
 		
 		if (u && isFree(x, y, u->flying)){//If unit exists and tile is free
 			unit* newUnit = new unit;//Unit to add
-			*newUnit = *u;//Copies unit
+			newUnit->copy(*u);//Copies unit
 			
 			//Sets unit data
 			newUnit->name = name;
@@ -2533,7 +2583,10 @@ class script {
 	}
 	
 	//Execution function - campaign
-	int exec(campaign* c);
+	int exec(campaign*);
+	
+	//Execution function - battle
+	int exec(battle*);
 };
 
 //Event class
@@ -3265,6 +3318,116 @@ class campaign: public content{
 
 list<campaign> campaignDb;//Campaign database
 
+//Battle class
+class battle: public content{
+	public:
+	map* m;//Current map
+	
+	controller player[2];//Players
+	int type[2];//Controller types
+	unit* moving;//Current unit
+	int movingIndex;//Current unit index 
+	
+	script setup;//Battle setup script
+	
+	deque<var> variables;//Global battle variables
+	
+	//Constructor
+	battle(){
+		m = NULL;
+		moving = NULL;
+		movingIndex = 0;
+		type = {CON_HUMAN, CON_AI};
+	}
+	
+	//Function to load from script object
+	void fromScriptObj(object o){
+		if (o.type == OBJTYPE_BATTLE){//If type is matching
+			content::fromScriptObj(o);//Loads base content data
+			
+			var* m = o.getVar("map");//Map variable
+			var* setup = o.getVar("setup");//Setup script variable
+			
+			if (m) this->m = get(&mapDb, m->value);//Gets map
+			if (setup) this->setup.fromString(setup->value);//Loads setup script
+		}
+	}
+	
+	//Printing function
+	void print(SDL_Surface* target, int x, int y){
+		if (m){//If map is valid
+			m->print (target, x, y);//Prints map
+		}
+		
+		SDL_Surface* statusText = TTF_RenderText_Blended(globalFont, status().c_str(), SDL_Color {255,255,255});//Status text
+		SDL_Rect offset {10,10};//Offset rectangle
+		SDL_BlitSurface(statusText, NULL, target, &offset);//Prints text
+		SDL_FreeSurface(statusText);//Frees status text
+	}
+	
+	//Function to go to next unit to move
+	void nextMoving(){
+		if (moving) moving->highlight = false;//Removes highlight
+		
+		if (moving == NULL && player[0].units.size() > 0){//If there's no current unit
+			moving = player[0].units[0];//Sets first unit
+			movingIndex = 0;//Sets moving index
+		}
+		
+		else {//Else
+			movingIndex++;//Next unit in index
+			
+			if (movingIndex < player[0].units.size()) moving = player[0].units[movingIndex];//Sets unit of first player
+			else if (movingIndex < player[0].units.size() + player[1].units.size()) moving = player[1].units[movingIndex - player[0].units.size()];//Sets unit of second player
+			else {//If index is past-end
+				if (player[0].units.size() > 0) moving = player[0].units[0];//Sets first unit of first player if it has units
+				else if (player[1].units.size() > 0) moving = player[1].units[0];//Sets first unit of second player if it has units
+				else moving = NULL;//If no unit available, moving is null
+				
+				player[0].resetMoved();
+				player[1].resetMoved();
+				
+				movingIndex = 0;//Sets moving index
+			}
+		}
+		
+		if (moving && moving->action == ACT_DEAD) nextMoving();//Goes again to next moving unit if the current one is dead
+		if (moving) moving->highlight = true;//Sets highlighted unit
+	}
+	
+	//Turn function
+	void turn(){
+		if (moving && !moving->moved && moving->ready()){//If there's a moving unit and it's ready
+			if (type[moving->side] == CON_HUMAN) player[moving->side].getInput(keys[SDLK_LSHIFT], movingIndex - (moving->side == 0 ? 0 : player[0].units.size()));//Moves unit if human controlled
+			else moving->AI(false);//Else runs AI move
+		}
+		
+		if (moving && moving->moved && moving->ready() && m->projectiles()) nextMoving();//Next moving unit
+	}
+	
+	//Next frame function
+	void nextFrame(){
+		if (m) m->nextFrame();//Next frame in map
+		if (moving && moving->action == ACT_DEAD) nextMoving();//Goes to next moving unit if the current one is dead
+	}
+	
+	//Function to get status text
+	string status(){
+		return getText("moving") + " " + moving->shownName + " (" + toString(moving->x) + "," + toString(moving->y) + ")";
+	}
+} currentBattle;
+
+list <battle> battleDb;//Battle database
+
+//Function to start battle
+void startBattle(string id){
+	if (get(&battleDb, id)){//If battle exists
+		currentBattle = *get(&battleDb, id);//Sets current battle
+		currentBattle.setup.exec(&currentBattle);//Execs setup script
+		currentBattle.nextMoving();//First moving unit in battle
+	}
+}
+
 //Function to handle slot selection
 void slot_getFocus(control* p){
 	slot_selected = atoi(p->id.c_str());
@@ -3809,6 +3972,182 @@ int script::exec(campaign* c){
 	return result;//Returns result
 }
 
+//Script execution function
+int script::exec(battle* c){
+	if (!c || !c->m) return false;//Exits function if no target was given
+	
+	int i;//Counter
+	int result = VOID;//Script result (false on errors)
+	
+	deque<var> vars = c->variables;//Known variables
+	
+	for (i = 0; i < cmds.size(); i++){//For each instruction		
+		deque<string> tokens = tokenize(cmds[i], "\t ");
+		
+		/*Variable substitution*/
+		int j;//Counter
+		for (j = 0; j < tokens.size(); j++){//For each token
+			if (tokens[j][0] == '$'){//If token is a variable
+				//Current map info
+				if (tokens[j] == "$map.id") tokens[j] = c->m->id;
+				
+				//Unit info variable [to expand]
+				else if (tokens[j].substr(0, 6) == "$unit."){//If variable is related to unit
+					string uName = tokens[j].substr(6, tokens[j].find(".", 6) - 6);//Unit name
+					string vName = tokens[j].substr(6 + uName.size() + 1);//Variable name
+					
+					unit* u = c->m->getUnit_name(uName);//Requested unit
+					if (u){//If unit was found
+						if (vName == "name") tokens[j] = u->name;
+						else if (vName == "id") tokens[j] = u->id;
+						
+						else if (vName == "x") tokens[j] = toString(u->x);
+						else if (vName == "y") tokens[j] = toString(u->y);
+						
+						else if (vName == "hits") tokens[j] = toString(u->hits());
+						if (vName == "maxHits") tokens[j] = toString(u->maxHits());
+						if (vName == "mana") tokens[j] = toString(u->mana());
+						if (vName == "maxMana") tokens[j] = toString(u->maxMana());
+						if (vName == "strength") tokens[j] = toString(u->strength());
+						if (vName == "constitution") tokens[j] = toString(u->constitution());
+						if (vName == "intelligence") tokens[j] = toString(u->intelligence());
+						if (vName == "wisdom") tokens[j] = toString(u->wisdom());
+					}
+				}
+				
+				//Variable existance info
+				else if (tokens[j].substr(0, 7) == "$exist."){//Asks for variable existance
+					string vName = tokens[j].substr(7);//Variable name
+					
+					int result = 0;//Result
+					int n;//Counter
+					for (n = 0; n < vars.size(); n++) if (vars[n].name == vName) result = 1;//Sets result to true if found variable
+					
+					tokens[j] = toString(result);//Sets token
+				}
+				
+				//Variable not found yet
+				else {
+					deque<var>::iterator v;//Variable iterator
+					for (v = vars.begin(); v != vars.end(); v++){//For each variable
+						if (v->name == tokens[j].substr(1)){//If variable matches
+							tokens[j] = v->value;//Sets token
+							break;//Exits loop
+						}
+					}
+				}
+			}
+		}
+		
+		/*Variable handling instructions*/{
+		if (tokens[0] == "int" && tokens.size() >= 3){//Integer variable declaration
+			string s = "";//Expression
+			int j;//Counter
+			for (j = 2; j < tokens.size(); j++) s += tokens[j] + " ";//Adds each token to string
+			
+			var newVar (tokens[1], expr(s, &ops_int));//New variable
+			vars.push_back(newVar);//Adds variable
+			c->variables.push_back(newVar);//Adds variable
+		}
+		
+		if (tokens[0] == "string" && tokens.size() >= 3){//String variable declaration
+			string s = "";//Expression
+			int j;//Counter
+			for (j = 2; j < tokens.size(); j++) s += tokens[j] + " ";//Adds each token to string
+			
+			var newVar (tokens[1], expr(s, &ops_str));//New variable
+			vars.push_back(newVar);//Adds variable
+			c->variables.push_back(newVar);//Adds variable
+		}
+		
+		if (tokens[0] == "var" && tokens.size() >= 3){//General variable declaration
+			string s = "";//Expression
+			int j;//Counter
+			for (j = 2; j < tokens.size(); j++) s += tokens[j] + " ";//Adds each token to string
+			s.erase(s.size() - 1);//Removes last space
+			
+			var newVar(tokens[1], s);//New variable
+			vars.push_back(newVar);//Adds variable
+			c->variables.push_back(newVar);//Adds variable
+		}
+		}
+		
+		/*Unit creation*/{
+		if (tokens[0] == "createUnit" && tokens.size() >= 6){//Create unit instruction
+			string uId = tokens[1];//Unit id
+			string uName = tokens[2];//Unit name
+			int uX = atoi(tokens[3].c_str());//Unit x
+			int uY = atoi(tokens[4].c_str());//Unit y
+			int uSide = atoi(tokens[5].c_str());//Unit side
+			
+			unit* u = c->m->createUnit(uId, uName, uX, uY, uSide);//Creates unit in map
+			
+			u->highlightColor = MINIMAP_UCOLOR(uSide);//Sets highlight
+			
+			if (u && tokens.size() >= 7) u->giveWeapon_primary(tokens[6]);//Gives weapon if defined
+			if (u && tokens.size() >= 8) u->turn(atoi(tokens[7].c_str()));//Picks direction if defined
+			
+			if (u) c->player[uSide > 1 ? 1 : 0].addUnit(u);//Gives control to selected player
+		}
+		}
+		
+		/*Inventory handling*/{
+		if (tokens[0] == "giveWeapon_primary" && tokens.size() >= 3){//Give primary weapon instruction
+			unit* u = c->m->getUnit_name(tokens[1]);//Gets unit
+			if (u) u->giveWeapon_primary(tokens[2]);//Gives weapon to unit
+		}
+		
+		if (tokens[0] == "wear" && tokens.size() >= 3){//Gives clothing to unit
+			unit* u = c->m->getUnit_name(tokens[1]);//Gets unit
+			if (u) u->wear(tokens[2]);//Gives cloth to unit
+		}
+		
+		if (tokens[0] == "giveItem" && tokens.size() >= 3){//Gives item to unit
+			unit* u = c->m->getUnit_name(tokens[1]);//Gets unit
+			if (u) u->giveItem(tokens[2]);//Gives item to unit
+		}
+		}
+		
+		/*Effects on units*/{
+		if (tokens[0] == "hits" && tokens.size() >= 3){//Vary hits instruction
+			unit* u = c->m->getUnit_name(tokens[1]);//Requested unit
+			if (u) u->varyHits(atoi(tokens[2].c_str()));//Varies hits
+		}
+		
+		if (tokens[0] == "mana" && tokens.size() >= 3){//Vary mana instruction
+			unit* u = c->m->getUnit_name(tokens[1]);//Requested unit
+			if (u) u->varyMana(atoi(tokens[2].c_str()));//Varies mana
+		}
+		
+		if (tokens[0] == "kill" && tokens.size() >= 2){//Kill instruction
+			unit* u = c->m->getUnit_name(tokens[1]);//Requested unit
+			if (u) u->kill();//Kills unit
+		}
+		}
+		
+		/*Flow control*/{
+		if (tokens[0] == "if" && tokens.size() >= 2){//If statement
+			string s = "";//Expression
+			int j;//Counter
+			for (j = 1; j < tokens.size(); j++) s += tokens[j] + " ";//Adds each token to string
+			
+			string result = expr(s, &ops_bool);//Calculates expression
+			if (!atoi(result.c_str())) i++;//Skips next instruction if statement is false
+		}
+		}
+		
+		/*Misc*/{
+		if (tokens[0] == "return" && tokens.size() >= 2){//Return statement
+			if (tokens[1] == "true") return TRUE;
+			else if (tokens[1] == "false") return FALSE;
+			else return VOID;
+		}
+		}
+	}
+	
+	return result;//Returns result
+}
+
 //Walking function
 void unit::walk(int direction, bool turnOnly){
 	if (parent){//If there's a reference map
@@ -3971,9 +4310,7 @@ void unit::AI(bool turnOnly){
 		
 		for (u = parent->units.begin(); u != parent->units.end(); u++)//For each unit in parent scenario
 			if (*u != this && (*u)->side != side && (!closest || uDist(this, *u) < uDist(this, closest))) closest = *u;//Sets closest unit
-
-		if (!closest || uDist(this, closest) > sight) return;//Exits if didn't found any appropriate unit or unit was too far to be seen
-		
+	
 		if (uDist(closest, this) == 1){//If closest unit is in adjacent tile
 			//Faces unit
 			if (closest->y < y) turn(NORTH);
@@ -3989,6 +4326,8 @@ void unit::AI(bool turnOnly){
 		else if (closest->x < x && parent->isFree(x - 1, y)) walk(WEST, turnOnly);
 		else if (closest->y > y && parent->isFree(x, y + 1)) walk(SOUTH, turnOnly);
 		else if (closest->x > x && parent->isFree(x + 1, y)) walk(EAST, turnOnly);
+		
+		if (ready()) rest();
 	}
 }
 
@@ -4035,7 +4374,7 @@ void setCampaign(string id){
 //New game click event handler
 void btn_newGame_click(control* p, mouseEvent ev){
 	gamePhase = GAME_PHASE;
-	setCampaign("tutorial");
+	setCampaign("c_river_arena");
 }
 
 //Load game click event handler
@@ -4134,6 +4473,12 @@ void loadDatabase(object o){
 				locales.push_back(newLoc);//Adds locale to database
 			else *get(&locales, i->name) += newLoc;//Else adds locale to previous
 		}
+		
+		if (i->type == OBJTYPE_BATTLE){//If object is a battle
+			battle b;//New battle
+			b.fromScriptObj(*i);//Loads battle
+			battleDb.push_back(b);//Adds battle to database
+		}
 	}
 }
 
@@ -4145,7 +4490,9 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 	uiInit();//Initializes UI
 	image_init();//Initializes image library
 		
-	initWindow(1000, 600, "Tales of Gydia");//Window setup
+	initWindow(640, 640, "Tales of Gydia");//Window setup
+	
+	keys = SDL_GetKeyState(NULL);//Gets keys
 	}
 	
 	/*Loads game settings*/{
