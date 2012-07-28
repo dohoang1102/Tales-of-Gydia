@@ -1,4 +1,4 @@
-//World editor tool
+//Map editor tool
 
 #include "game.h"
 
@@ -24,6 +24,7 @@ void bucketFill(map* m, int x, int y, string brushId, int brushLayer){
 
 void reset (map* m){
 	m->decos.clear();
+	m->units.clear();
 }
 
 void edit(map* m){
@@ -79,6 +80,12 @@ void edit(map* m){
 				else if (tokens[0] == "deco" && tokens.size() >= 2){
 					mode = 1;
 					brush = tokens[1];
+				}
+				
+				else if (tokens[0] == "unit" && tokens.size() >= 3){
+					mode = 2;
+					brush = tokens[1];
+					brushLayer = atoi(tokens[2].c_str());
 				}
 				
 				else if (tokens[0] == "undo" && oldX != -1){
@@ -169,6 +176,11 @@ void edit(map* m){
 						m->makePict(grid);
 					}
 					
+					else if (e.button.button == SDL_BUTTON_LEFT && mode == 2){
+						unit* u = m->createUnit(brush, brush, tX, tY, brushLayer);
+						u->highlight = true;
+					}
+					
 					else if (e.button.button == SDL_BUTTON_RIGHT && mode == 0){
 						brush = m->getTile(tX, tY)->id;
 						brushLayer = m->getTile(tX, tY)->layer;
@@ -177,6 +189,16 @@ void edit(map* m){
 					else if (e.button.button == SDL_BUTTON_RIGHT && mode == 1){
 						m->removeDeco(tX, tY);
 						m->makePict(grid);
+					}
+					
+					else if (e.button.button == SDL_BUTTON_RIGHT && mode == 2){
+						unit *u = m->getUnit_pos(tX, tY);
+						
+						if (u){
+							deque<unit*>::iterator i;
+							for (i = m->units.begin(); i != m->units.end(); i++)
+								if (*i == u) {m->units.erase(i); break; }
+						}
 					}
 					
 					else if (e.button.button == SDL_BUTTON_MIDDLE && mode == 0){

@@ -123,6 +123,7 @@ int DB_VARIABLEWARNING		= getErrorCode();//Non-lethal variable error in database
 #define CALC_DAMAGETAKEN(BASE, STAT, MULT)	((BASE) * ((MULT) - (STAT) / 100) >= MINDAMAGE ? MINDAMAGE : ceil((BASE) * ((MULT) - (STAT) / 100)))//Damage taken calculation: [base damage] * [resistance multiplier reduced of stat/100]
 #define CALC_RECOVERY(STAT1, STAT2)			((STAT1) * (STAT2) > 100 ? (STAT1) * (STAT2) / 100 : 1)//Recovery calculation
 #define CALC_REQUIREDXP(LEVEL)				((LEVEL) * (LEVEL) * 8)//Required xp calculation
+#define CALC_DIST(XA,YA,XB,YB)				(sqrt(pow((XA) - (XB), 2) + pow((YA) - (YB), 2)))//Distance calculation
 
 class unit;//Unit class prototype
 class map;//Map class prototype
@@ -617,14 +618,14 @@ class terrain: public content{
 list <terrain> terrainDb;//Terrains database
 
 //Damage type class
-class damType: public content {
+class damageType: public content {
 	public:
 	int superType;//Damage super-type (physical/magic)
 	
 	double mult;//Damage multiplier (used in resistances)
 	
 	//Constructor
-	damType(){
+	damageType(){
 		id = "";
 		superType = DAM_PHYSICAL;
 		
@@ -650,7 +651,7 @@ class damType: public content {
 	}
 };
 
-list <damType> damTypeDb;//Types database
+list <damageType> damageTypeDb;//Types database
 
 //General item class
 class item: public content {
@@ -718,9 +719,9 @@ class effect: public content {
 	
 	int duration;//Effect duration (0 instant/permanent, else duration in turns)
 	
-	damType type;//Effect damage type (needed only if effect damages someone)
+	damageType dt_type;//Effect damage type (needed only if effect damages someone)
 	
-	list<damType> resistances;//Per-type resistances bonuses
+	list<damageType> resistances;//Per-type resistances bonuses
 	
 	bool img;//Flag indicating if image was given
 	image icon;//Icon shown when effect is active
@@ -771,14 +772,14 @@ class effect: public content {
 			if (wisdom) this->wisdom = wisdom->intValue();
 			if (shot) this->shot = shot->value;
 			if (duration) this->duration = duration->intValue();
-			if (type && get(&damTypeDb, type->value)) this->type = *get(&damTypeDb, type->value);
+			if (type && get(&damageTypeDb, type->value)) this->type = *get(&damageTypeDb, type->value);
 			if (icon) {this->icon.fromScriptObj(*icon); img = true;}
 			
 			//Loads resistances
 			deque<object>::iterator i;//Object iterator
 			for (i = o.o.begin(); i != o.o.end(); i++){//For each sub-object
-				if (i->type == OBJTYPE_DAMTYPE && get(&damTypeDb, i->name)){//If object is a damage type and that damage type exists
-					damType newDT;//New damage type
+				if (i->type == OBJTYPE_DAMTYPE && get(&damageTypeDb, i->name)){//If object is a damage type and that damage type exists
+					damageType dt_newDT;//New damage type
 					newDT.fromScriptObj(*i);//Loads damage type
 					resistances.push_back(newDT);//Adds to resistances
 				}
@@ -1110,7 +1111,7 @@ class unit: public content{
 	int sight;//Unit's sight
 	
 	list<effect> tempEffects;//Temporary effects
-	list<damType> resistances;//Per-type resistances
+	list<damageType> resistances;//Per-type resistances
 	
 	//Experience
 	int xp, level;//Current xp and level
@@ -1313,7 +1314,7 @@ class unit: public content{
 			deque<object>::iterator i;//Sub object iterator
 			for (i = o.o.begin(); i != o.o.end(); i++){//For each sub-object
 				if (i->type == OBJTYPE_DAMTYPE){//If object is a damage type
-					damType newDT;//New damage type - resistance
+					damageType dt_newDT;//New damage type - resistance
 					newDT.fromScriptObj(*i);//Loads resistance
 					resistances.push_back(newDT);//Adds to resistances
 				}
@@ -1419,9 +1420,9 @@ class unit: public content{
 	}
 	
 	//Function to vary hits
-	void varyHits(int amount, damType *type = NULL){
+	void varyHits(int amount, damageType dt_*type = NULL){
 		if (type && amount < 0){//If damage type was given and unit was damaged (amount < 0)
-			damType* res = get(&resistances, type->id);//Gets resistance
+			damageType* res = get(&resistances, type->id);//Gets resistance
 			baseHits += CALC_DAMAGETAKEN(amount, (type->superType == DAM_PHYSICAL ? constitution() : wisdom()), (res ? res->mult : 1));//Damages unit calculating damage
 		}
 		
@@ -1601,7 +1602,7 @@ class unit: public content{
 	
 	//Function to get base damage multiplier for given type
 	double baseMult(string tId){
-		damType* base = get(&resistances, tId);//Base resistance
+		damageType* base = get(&resistances, tId);//Base resistance
 		
 		if (base) return base->mult;//Returns result
 		else return 1;
@@ -1613,27 +1614,27 @@ class unit: public content{
 		
 		list<effect>::iterator i;//Effect iterator
 		for (i = tempEffects.begin(); i != tempEffects.end(); i++){//For each temporary effect
-			damType* res = get(&i->resistances, tId);//Effect resistance bonus
+			damageType* res = get(&i->resistances, tId);//Effect resistance bonus
 			if (res) result += res->mult;//Adds effect to result
 		}
 		
 		if (head){//If there's a head clothing
-			damType* res = get(&head->onEquip.resistances, tId);//Head resistance bonus
+			damageType* res = get(&head->onEquip.resistances, tId);//Head resistance bonus
 			if (res) result += res->mult;//Adds effect to result
 		}
 		
 		if (body){//If there's a body clothing
-			damType* res = get(&body->onEquip.resistances, tId);//Body resistance bonus
+			damageType* res = get(&body->onEquip.resistances, tId);//Body resistance bonus
 			if (res) result += res->mult;//Adds effect to result
 		}
 		
 		if (legs){//If there's a legs clothing
-			damType* res = get(&legs->onEquip.resistances, tId);//Legs resistance bonus
+			damageType* res = get(&legs->onEquip.resistances, tId);//Legs resistance bonus
 			if (res) result += res->mult;//Adds effect to result
 		}
 		
 		if (primary){//If there's a primary weapon
-			damType* res = get(&primary->onEquip.resistances, tId);//Primary weapon resistance bonus
+			damageType* res = get(&primary->onEquip.resistances, tId);//Primary weapon resistance bonus
 			if (res) result += res->mult;//Adds effect to result
 		}
 		
@@ -2132,6 +2133,8 @@ class map: public content{
 			newUnit->side = side;
 			newUnit->parent = this;
 			
+			newUnit->highlightColor = MINIMAP_UCOLOR(side);//Sets highlight color
+			
 			units.push_back(newUnit);//Adds unit to map
 			sortUnits();//Sorts map units
 			return newUnit;//Returns new unit
@@ -2518,6 +2521,17 @@ class map: public content{
 		
 		for (i = units.begin(); i != units.end(); i++){//For each unit
 			if ((*i)->name == name) return *i;//Returns unit if name is matching
+		}
+			
+		return NULL;//Returns null if no unit was found
+	}
+	
+	//Function to get unit by position
+	unit* getUnit_pos(int x, int y){
+		deque<unit*>::iterator i;//Unit iterator
+		
+		for (i = units.begin(); i != units.end(); i++){//For each unit
+			if ((*i)->x == x && (*i)->y == y) return *i;//Returns unit if name is matching
 		}
 			
 		return NULL;//Returns null if no unit was found
@@ -3014,7 +3028,7 @@ class campaign: public content{
 			if (player.moved() && player.ready() && m->projectiles()) nextTurn();//Goes to AI turn if moved
 		}
 		
-		if (turn == 1 && player.ready() && ai.readyOrDead() && ai.AI())//When all AI units have been moved
+		if (turn == 1 && player.ready() && ai.readyOrDead() && ai.AI() && m->projectiles())//When all AI units have been moved
 			nextTurn();//Next turn
 			
 		if (turn == 0 && player.ready()){//If player turn
@@ -3119,7 +3133,7 @@ class campaign: public content{
 			for (t = resBox.begin(); t != resBox.end(); t++){//For each text box
 				double effRes = player.units[0]->typeMult((*t)->id);//Gets effect resistance
 				
-				(*t)->text = get(&damTypeDb, (*t)->id)->shownName + " " + toString((1 - effRes) * 100) + "\%";//Sets label text
+				(*t)->text = get(&damageTypeDb, (*t)->id)->shownName + " " + toString((1 - effRes) * 100) + "\%";//Sets label text
 				
 				if (effRes > 1) (*t)->foreColor = infoPanel_col4;
 				else if (effRes < 1) (*t)->foreColor = infoPanel_col3;
@@ -3446,7 +3460,7 @@ void btn_use_click(control* p, mouseEvent ev){
 		
 	item* i = current.player.units[0]->inv[slot_selected];//Item to use
 	
-	if (slot_selected < 12){//If inventory slot was selected
+	if (slot_selected < 12 && i){//If inventory slot was selected
 		if (i->itemType == DISPOSABLE){//If item can be used
 			disposable *d = (disposable*) i;
 			current.player.units[0]->applyEffect(d->use);//Applies effect on player
@@ -4304,30 +4318,216 @@ void unit::AI(bool turnOnly){
 	if (action == ACT_DEAD) return;//Exits if unit is dead
 	
 	if (parent){//If there's a parent scenario
-		//Picks closest unit
-		unit* closest = NULL;//Pointer to closest emey unit
-		deque<unit*>::iterator u;//Unit iterator
+		double scores [8] = {-999,-999,-999,-999,-999,-999,-999,-999};//Move valuation scores
+		int bestMove = -1; 
 		
-		for (u = parent->units.begin(); u != parent->units.end(); u++)//For each unit in parent scenario
-			if (*u != this && (*u)->side != side && (!closest || uDist(this, *u) < uDist(this, closest))) closest = *u;//Sets closest unit
-	
-		if (uDist(closest, this) == 1){//If closest unit is in adjacent tile
-			//Faces unit
-			if (closest->y < y) turn(NORTH);
-			else if (closest->x < x) turn(WEST);
-			else if (closest->y > y) turn(SOUTH);
-			else if (closest->x > x) turn(EAST);
-			
-			strike();//Strikes
+		/*Calculates motion scores*/{
+		//Motion north
+		if (parent->isFree(x, y - 1, flying)){//If north tile is free
+			//Picks closest unit
+			unit* closest = NULL;//Pointer to closest emey unit
+			int closestDist = 100000;
+			deque<unit*>::iterator u;//Unit iterator
+		
+			for (u = parent->units.begin(); u != parent->units.end(); u++)//For each unit in parent scenario
+				if ((*u)->side != side && (!closest || CALC_DIST(x, y - 1, (*u)->x, (*u)->y) < closestDist)){//If unit is closer
+					closest = *u;//Sets closest unit
+					closestDist = CALC_DIST(x, y - 1, (*u)->x, (*u)->y);//Sets closest distance
+				}
+				
+			if (closest && closestDist <= sight) scores[0] = -closestDist;
+			else scores[0] = -999;
+		}
+		else scores[0] = -999;
+		
+		//Motion west
+		if (parent->isFree(x - 1, y, flying)){//If west tile is free
+			//Picks closest unit
+			unit* closest = NULL;//Pointer to closest emey unit
+			int closestDist = 100000;
+			deque<unit*>::iterator u;//Unit iterator
+		
+			for (u = parent->units.begin(); u != parent->units.end(); u++)//For each unit in parent scenario
+				if ((*u)->side != side && (!closest || CALC_DIST(x - 1, y, (*u)->x, (*u)->y) < closestDist)){//If unit is closer
+					closest = *u;//Sets closest unit
+					closestDist = CALC_DIST(x - 1, y, (*u)->x, (*u)->y);//Sets closest distance
+				}
+				
+			if (closest && closestDist <= sight) scores[1] = -closestDist;
+			else scores[1] = -999;
+		}
+		else scores[1] = -999;
+		
+		//Motion south
+		if (parent->isFree(x, y + 1, flying)){//If south tile is free
+			//Picks closest unit
+			unit* closest = NULL;//Pointer to closest emey unit
+			int closestDist = 100000;
+			deque<unit*>::iterator u;//Unit iterator
+		
+			for (u = parent->units.begin(); u != parent->units.end(); u++)//For each unit in parent scenario
+				if ((*u)->side != side && (!closest || CALC_DIST(x, y + 1, (*u)->x, (*u)->y) < closestDist)){//If unit is closer
+					closest = *u;//Sets closest unit
+					closestDist = CALC_DIST(x, y + 1, (*u)->x, (*u)->y);//Sets closest distance
+				}
+				
+			if (closest && closestDist <= sight) scores[2] = -closestDist;
+			else scores[2] = -999;
+		}
+		else scores[2] = -999;
+		
+		//Motion east
+		if (parent->isFree(x + 1, y, flying)){//If east tile is free
+			//Picks closest unit
+			unit* closest = NULL;//Pointer to closest emey unit
+			int closestDist = 100000;
+			deque<unit*>::iterator u;//Unit iterator
+		
+			for (u = parent->units.begin(); u != parent->units.end(); u++)//For each unit in parent scenario
+				if ((*u)->side != side && (!closest || CALC_DIST(x + 1, y, (*u)->x, (*u)->y) < closestDist)){//If unit is closer
+					closest = *u;//Sets closest unit
+					closestDist = CALC_DIST(x + 1, y, (*u)->x, (*u)->y);//Sets closest distance
+				}
+				
+			if (closest && closestDist <= sight) scores[3] = -closestDist;
+			else scores[3] = -999;
+		}
+		else scores[3] = -999;
 		}
 		
-		//Gives walking orders
-		if (closest->y < y && parent->isFree(x, y - 1)) walk(NORTH, turnOnly);
-		else if (closest->x < x && parent->isFree(x - 1, y)) walk(WEST, turnOnly);
-		else if (closest->y > y && parent->isFree(x, y + 1)) walk(SOUTH, turnOnly);
-		else if (closest->x > x && parent->isFree(x + 1, y)) walk(EAST, turnOnly);
+		/*Calculates strike scores*/{
+			if (primary){//If unit has a weapon
+				if (primary->onTarget.shot == ""){//If weapon is melee (no projectile)
+					unit* north = parent->getUnit_pos(x, y - 1);//North unit
+					unit* west = parent->getUnit_pos (x - 1, y);//West unit
+					unit* south = parent->getUnit_pos(x, y + 1);//South unit
+					unit* east = parent->getUnit_pos (x + 1, y);//East unit
+					
+					if (north && north->side != side){//If there's a north unit
+						damageType* res = get(&north->resistances, primary->onTarget.type.id);//Enemy resistaces
+						scores[4] = -CALC_DAMAGETAKEN(primary->getEff(this).hits, (primary->onTarget.type.superType == DAM_PHYSICAL ? north->constitution() : north->wisdom()), (res ? res->mult : 1));//Sets strike score
+					}
+					
+					if (west && west->side != side){//If there's a west unit
+						damageType* res = get(&west->resistances, primary->onTarget.type.id);//Enemy resistaces
+						scores[5] = -CALC_DAMAGETAKEN(primary->getEff(this).hits, (primary->onTarget.type.superType == DAM_PHYSICAL ? west->constitution() : west->wisdom()), (res ? res->mult : 1));//Sets strike score
+					}
+					
+					if (south && south->side != side){//If there's a south unit
+						damageType* res = get(&south->resistances, primary->onTarget.type.id);//Enemy resistaces
+						scores[6] = -CALC_DAMAGETAKEN(primary->getEff(this).hits, (primary->onTarget.type.superType == DAM_PHYSICAL ? south->constitution() : south->wisdom()), (res ? res->mult : 1));//Sets strike score
+					}
+					
+					if (east && east->side != side){//If there's a south unit
+						damageType* res = get(&east->resistances, primary->onTarget.type.id);//Enemy resistaces
+						scores[7] = -CALC_DAMAGETAKEN(primary->getEff(this).hits, (primary->onTarget.type.superType == DAM_PHYSICAL ? east->constitution() : east->wisdom()), (res ? res->mult : 1));//Sets strike score
+					}
+				}
+				
+				else {//If weapon is ranged
+					unit* north = NULL, *west = NULL, *south = NULL, *east = NULL;//Hit units
+					projectile* shot = get(&projectileDb, primary->onTarget.shot);//Shot projectile for damage calculation
+					
+					if (shot){//If projectile exists
+						int i;//Counter
+						
+						//Checks for north units
+						for (i = 1; i < shot->range; i++){//For each tile northbound
+							if (parent->getUnit_pos(x, y - i)){
+								north = parent->getUnit_pos(x, y - i);//Sets north unit
+								
+								if (north->side == side) break;
+								
+								damageType* res = get(&north->resistances, shot->onTarget.type.id);//Enemy resistaces
+								scores[4] = -CALC_DAMAGETAKEN(shot->onTarget.hits, (shot->onTarget.type.superType == DAM_PHYSICAL ? north->constitution() : north->wisdom()), (res ? res->mult : 1));//Sets strike score
+								
+								break;//Exits loop
+							}
+							
+							else if (!parent->isFree(x, y - i, shot->flying))//If projectile is blocked
+								break;//Exits loop
+						}
+						
+						//Checks for west units
+						for (i = 1; i < shot->range; i++){//For each tile westbound
+							if (parent->getUnit_pos(x - i, y)){
+								west = parent->getUnit_pos(x - i, y);//Sets north unit
+								
+								if (west->side == side) break;
+								
+								damageType* res = get(&west->resistances, shot->onTarget.type.id);//Enemy resistaces
+								scores[5] = -CALC_DAMAGETAKEN(shot->onTarget.hits, (shot->onTarget.type.superType == DAM_PHYSICAL ? west->constitution() : west->wisdom()), (res ? res->mult : 1));//Sets strike score
+								
+								break;//Exits loop
+							}
+							
+							else if (!parent->isFree(x - i, y, shot->flying))//If projectile is blocked
+								break;//Exits loop
+						}
+						
+						//Checks for south units
+						for (i = 1; i < shot->range; i++){//For each tile southbound
+							if (parent->getUnit_pos(x, y + i)){
+								south = parent->getUnit_pos(x, y + i);//Sets north unit
+								
+								if (south->side == side) break;
+								
+								damageType* res = get(&south->resistances, shot->onTarget.type.id);//Enemy resistaces
+								scores[6] = -CALC_DAMAGETAKEN(shot->onTarget.hits, (shot->onTarget.type.superType == DAM_PHYSICAL ? south->constitution() : south->wisdom()), (res ? res->mult : 1));//Sets strike score
+								
+								break;//Exits loop
+							}
+							
+							else if (!parent->isFree(x, y + i, shot->flying))//If projectile is blocked
+								break;//Exits loop
+						}
+						
+						//Checks for east units
+						for (i = 1; i < shot->range; i++){//For each tile southbound
+							if (parent->getUnit_pos(x + i, y)){
+								east = parent->getUnit_pos(x + i, y);//Sets north unit
+								
+								if (east->side == side) break;
+								
+								damageType* res = get(&east->resistances, shot->onTarget.type.id);//Enemy resistaces
+								scores[7] = -CALC_DAMAGETAKEN(shot->onTarget.hits, (shot->onTarget.type.superType == DAM_PHYSICAL ? east->constitution() : east->wisdom()), (res ? res->mult : 1));//Sets strike score
+								
+								break;//Exits loop
+							}
+							
+							else if (!parent->isFree(x + i, y, shot->flying))//If projectile is blocked
+								break;//Exits loop
+						}
+					}
+				}
+			}
+		}
 		
-		if (ready()) rest();
+		//Picks best move
+		int i;//Counter
+		int max = -1000000;//Highest move found
+		
+		for (i = 0; i < 8; i++){//For each move
+			if ((i == 0 || scores[i] > max) && scores[i] > -999){//If higher than maximum found
+				max = scores[i];//Sets new maximum
+				bestMove = i;//Sets best move index
+			}
+		}
+		
+		//Executes best move
+		switch (bestMove){
+			case 0: walk(NORTH, false); break;
+			case 1:	walk(WEST, false); break;
+			case 2: walk(SOUTH, false); break;
+			case 3: walk(EAST, false); break;
+			
+			case 4: turn(NORTH); strike(); break;
+			case 5: turn(WEST); strike(); break;
+			case 6: turn(SOUTH); strike(); break;
+			case 7: turn(EAST); strike(); break;
+			
+			case -1: rest();
+		}
 	}
 }
 
@@ -4346,17 +4546,14 @@ bool controller::AI(){
 			goto begin;//Restarts
 		}
 		
-		else if (!units[AI_current]->moved && last){//If unit is the last and didn't move
-			AI_current = 0;//Resets units counter
-			return true;//Returns true
-		}
-		
 		else if (units[AI_current]->moved && !last){//If unit is not the last and moved
 			AI_current++;//Next unit
-			return false;//Returns true
+			
+			if (!units[AI_current - 1]->ready()) return false;//Returns true if unit actually moved (not ready)
+			else goto begin;//Else restarts
 		}
 		
-		else if (units[AI_current]->moved && last){//If unit is the last and moved
+		else if (last){//If unit is the last and moved
 			AI_current = 0;//Resets units counter
 			return true;//Returns true
 		}
@@ -4374,7 +4571,7 @@ void setCampaign(string id){
 //New game click event handler
 void btn_newGame_click(control* p, mouseEvent ev){
 	gamePhase = GAME_PHASE;
-	setCampaign("c_river_arena");
+	setCampaign("main");
 }
 
 //Load game click event handler
@@ -4424,9 +4621,9 @@ void loadDatabase(object o){
 		}
 		
 		if (i->type == OBJTYPE_DAMTYPE){//If object is a damage type
-			damType newDT;//New type
+			damageType dt_newDT;//New type
 			newDT.fromScriptObj(*i);//Loads type
-			damTypeDb.push_back(newDT);//Adds type to database
+			damageTypeDb.push_back(newDT);//Adds type to database
 		}
 		
 		if (i->type == OBJTYPE_WEAPON || i->type == OBJTYPE_SPELL){//If object is a weapon
@@ -4490,7 +4687,7 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 	uiInit();//Initializes UI
 	image_init();//Initializes image library
 		
-	initWindow(640, 640, "Tales of Gydia");//Window setup
+	initWindow(800, 600, "Tales of Gydia");//Window setup
 	
 	keys = SDL_GetKeyState(NULL);//Gets keys
 	}
@@ -4667,9 +4864,9 @@ void game_init(string dbFile, string settingsFile, string themeFile){
 	infoPanel.controls.push_back(&effBox);
 	
 	//Resistance boxes
-	list<damType>::iterator i;//Damage type iterator
+	list<damageType>::iterator i;//Damage type iterator
 	int n = 0;
-	for (i = damTypeDb.begin(); i != damTypeDb.end(); i++){//For each damage type loaded
+	for (i = damageTypeDb.begin(); i != damageTypeDb.end(); i++){//For each damage type loaded
 		textBox *t = new textBox;//New text box
 		
 		*t = conBox;
