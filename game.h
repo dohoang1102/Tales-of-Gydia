@@ -31,7 +31,7 @@ int DB_VARIABLEWARNING		= getErrorCode();//Non-lethal variable error in database
 
 #define OBJTYPE_DECO		"deco"//Object type deco
 #define OBJTYPE_TERRAIN		"terrain"//Object type terrain
-#define OBJTYPE_DAMTYPE		"damageType"//Object type damage type
+#define OBJTYPE_DAMTYPE		"damageType "//Object type damage type
 #define OBJTYPE_EFFECT		"effect"//Object type effect
 #define OBJTYPE_PROJECTILE	"projectile"//Object type projectile
 #define OBJTYPE_ITEM		"item"//Object type item
@@ -719,7 +719,7 @@ class effect: public content {
 	
 	int duration;//Effect duration (0 instant/permanent, else duration in turns)
 	
-	damageType dt_type;//Effect damage type (needed only if effect damages someone)
+	damageType type;//Effect damage type (needed only if effect damages someone)
 	
 	list<damageType> resistances;//Per-type resistances bonuses
 	
@@ -779,7 +779,7 @@ class effect: public content {
 			deque<object>::iterator i;//Object iterator
 			for (i = o.o.begin(); i != o.o.end(); i++){//For each sub-object
 				if (i->type == OBJTYPE_DAMTYPE && get(&damageTypeDb, i->name)){//If object is a damage type and that damage type exists
-					damageType dt_newDT;//New damage type
+					damageType newDT;//New damage type
 					newDT.fromScriptObj(*i);//Loads damage type
 					resistances.push_back(newDT);//Adds to resistances
 				}
@@ -1314,7 +1314,7 @@ class unit: public content{
 			deque<object>::iterator i;//Sub object iterator
 			for (i = o.o.begin(); i != o.o.end(); i++){//For each sub-object
 				if (i->type == OBJTYPE_DAMTYPE){//If object is a damage type
-					damageType dt_newDT;//New damage type - resistance
+					damageType newDT;//New damage type - resistance
 					newDT.fromScriptObj(*i);//Loads resistance
 					resistances.push_back(newDT);//Adds to resistances
 				}
@@ -1420,7 +1420,7 @@ class unit: public content{
 	}
 	
 	//Function to vary hits
-	void varyHits(int amount, damageType dt_*type = NULL){
+	void varyHits(int amount, damageType*type = NULL){
 		if (type && amount < 0){//If damage type was given and unit was damaged (amount < 0)
 			damageType* res = get(&resistances, type->id);//Gets resistance
 			baseHits += CALC_DAMAGETAKEN(amount, (type->superType == DAM_PHYSICAL ? constitution() : wisdom()), (res ? res->mult : 1));//Damages unit calculating damage
@@ -4621,7 +4621,7 @@ void loadDatabase(object o){
 		}
 		
 		if (i->type == OBJTYPE_DAMTYPE){//If object is a damage type
-			damageType dt_newDT;//New type
+			damageType newDT;//New type
 			newDT.fromScriptObj(*i);//Loads type
 			damageTypeDb.push_back(newDT);//Adds type to database
 		}
