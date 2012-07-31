@@ -3,6 +3,22 @@
 
 #include "game.h"
 
+/* Tales of Gydia - turn based RPG
+Copyright (C) 2012  Michele Bucelli
+ 
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+ 
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.*/
+
 int lfb = 0;
 int fps = 30;
 
@@ -11,6 +27,8 @@ int main(int argc, char* argv[]){
 	SDL_Event e;
 	
 	game_init("data/cfg/db.cfg", "data/cfg/settings.cfg", "data/cfg/theme.cfg");
+	
+	begin:
 	
 	while (running && gamePhase == MAIN_MENU) {
 		while (SDL_PollEvent(&e)){
@@ -129,6 +147,26 @@ int main(int argc, char* argv[]){
 				int i;
 				for (i = 0; i < 12; i++) current.m->getDeco(dX, dY)->inside[i] = current.exchanging[i];
 				current.view = EXCHANGE;
+			}
+		}
+		
+		if (current.player.units[0]->hits() <= 0){
+			SDL_FillRect(window, &window->clip_rect, 0);
+			
+			SDL_Surface* gameoverText = TTF_RenderText_Blended(globalFont, getText("gameOver").c_str(), SDL_Color {255,255,255});
+			SDL_Rect offset = {(window->w - gameoverText->w) / 2, (window->h - gameoverText->h) / 2};
+			SDL_BlitSurface(gameoverText, NULL, window, &offset);
+			SDL_FreeSurface(gameoverText);
+			
+			SDL_Flip(window);
+			
+			while (true){
+				while (SDL_PollEvent(&e)){
+					if (e.type == SDL_KEYDOWN){
+						gamePhase = MAIN_MENU;
+						goto begin;
+					}
+				}
 			}
 		}
 		

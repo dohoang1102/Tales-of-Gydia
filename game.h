@@ -1,5 +1,21 @@
 //Game handling header
 
+/* Tales of Gydia - turn based RPG
+Copyright (C) 2012  Michele Bucelli
+ 
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+ 
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.*/
+
 #ifndef _GAME
 #define _GAME
 
@@ -116,6 +132,9 @@ int DB_VARIABLEWARNING		= getErrorCode();//Non-lethal variable error in database
 //Controller types
 #define CON_HUMAN			0//Human
 #define CON_AI				1//AI
+
+//Randomization values
+#define RAND_MONSTERSPROB	2//% of monsters creation on tiles when placing them randomly
 
 //Game calculations: damage, mana costs, ...
 #define MINDAMAGE							-1//Minimum damage that can be taken (if calculates lower damage, replaced with this value)
@@ -548,6 +567,8 @@ class terrain: public content{
 	bool free;//Flag indicating if player can walk on terrain
 	bool free_air;//Flag indicating if things can fly over terrain
 	Uint32 mmapColor;//Color in minimap
+	
+	string randUnit;//Unit that can be randomly placed on terrain
 		
 	//Constructor
 	terrain(){
@@ -558,6 +579,7 @@ class terrain: public content{
 		free = true;
 		free_air = true;
 		mmapColor = 0;
+		randUnit = "";
 	}
 	
 	//Function to get transition image
@@ -580,39 +602,39 @@ class terrain: public content{
 		}
 	}
 	
-	#ifdef _SCRIPT
-		//Function to load from script object
-		void fromScriptObj(object o){
-			if (o.type == OBJTYPE_TERRAIN){//If type is matching
-				content::fromScriptObj(o);//Loads base content information
-				
-				object* baseImage = o.getObj("baseImage");//Base image sub-object
-				
-				if (baseImage) this->baseImage.fromScriptObj(*baseImage);//Loads base image
-				
-				deque<object>::iterator i;//Iterator
-				for (i = o.o.begin(); i != o.o.end(); i++){//For each sub object
-					if (i->type == OBJTYPE_IMAGE && i->name != "baseImage"){//If object is an image
-						image m;//New image
-						m.fromScriptObj(*i);//Loads the image
-						transitions.push_back(m);//Adds the image to the transitions
-					}
+	//Function to load from script object
+	void fromScriptObj(object o){
+		if (o.type == OBJTYPE_TERRAIN){//If type is matching
+			content::fromScriptObj(o);//Loads base content information
+			
+			object* baseImage = o.getObj("baseImage");//Base image sub-object
+			
+			if (baseImage) this->baseImage.fromScriptObj(*baseImage);//Loads base image
+			
+			deque<object>::iterator i;//Iterator
+			for (i = o.o.begin(); i != o.o.end(); i++){//For each sub object
+				if (i->type == OBJTYPE_IMAGE && i->name != "baseImage"){//If object is an image
+					image m;//New image
+					m.fromScriptObj(*i);//Loads the image
+					transitions.push_back(m);//Adds the image to the transitions
 				}
-				
-				var* free = o.getVar("free");//Free variable
-				var* free_air = o.getVar("free_air");//Air free variable
-				var* mmapColor = o.getVar("mmapColor");//Minimap color variable
-				
-				if (free) this->free = free->intValue();//Gets free flag
-				if (free_air) this->free_air = free_air->intValue();//Gets air free flag
-				if (mmapColor) this->mmapColor = strtol(mmapColor->value.c_str(), NULL, 0);//Gets minimap color
 			}
 			
-			#ifdef _ERROR
-				else if (errFunc) errFunc(SCRIPT_WARNING_INVALIDOBJTYPE, "[map.h] No terrain could be loaded from " + o.type + " object");
-			#endif
+			var* free = o.getVar("free");//Free variable
+			var* free_air = o.getVar("free_air");//Air free variable
+			var* mmapColor = o.getVar("mmapColor");//Minimap color variable
+			var* randUnit = o.getVar("randUnit");//Random unit variable
+			
+			if (free) this->free = free->intValue();//Gets free flag
+			if (free_air) this->free_air = free_air->intValue();//Gets air free flag
+			if (mmapColor) this->mmapColor = strtol(mmapColor->value.c_str(), NULL, 0);//Gets minimap color
+			if (randUnit) this->randUnit = randUnit->value;//Sets random unit
 		}
-	#endif
+		
+		#ifdef _ERROR
+			else if (errFunc) errFunc(SCRIPT_WARNING_INVALIDOBJTYPE, "[map.h] No terrain could be loaded from " + o.type + " object");
+		#endif
+	}
 };
 
 list <terrain> terrainDb;//Terrains database
@@ -3328,6 +3350,20 @@ class campaign: public content{
 			}
 		}
 	}
+	
+	//Function to randomly place units in current map
+	void randFill(){
+		int x, y;//Counters
+				
+		for (y = 0; y < m->height(); y++){//For each row
+			for (x = 0; x < m->width(); x++){//For each column
+				if (m->getTile(x, y)->randUnit != "" && rand() % 100 < RAND_MONSTERSPROB){//If tile has a random unit id
+					unit* u = m->createAI(m->getTile(x, y)->randUnit, toString(m->units.size()), x, y, 1);//Creates unit
+					if (u) ai.addUnit(u);//Gives unit to AI controller
+				}
+			}
+		}
+	}
 } current;
 
 list<campaign> campaignDb;//Campaign database
@@ -3815,6 +3851,10 @@ int script::exec(campaign* c){
 				if (tokens.size() >= 8) u->turn(atoi(tokens[7].c_str()));//Picks direction if defined
 				c->ai.addUnit(u);//Gives control to player
 			}
+		}
+		
+		if (tokens[0] == "randFill"){//Fills map randomly
+			c->randFill();//Fills current map randomly
 		}
 		}
 		

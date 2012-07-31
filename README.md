@@ -3,6 +3,8 @@
 ### 1. ABOUT
 Tales of Gydia will be a fantasy turn based tactical RPG taking part in Liberated Pixel Cup (see http://lpc.opengameart.org)
 
+Source repository: https://github.com/buch415/Tales-of-Gydia
+
 ### 2. LICENSING
 All code and .cfg files are released under GPL v3.0 license (see http://www.gnu.org/licenses/gpl-3.0.html).
 

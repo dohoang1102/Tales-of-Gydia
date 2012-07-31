@@ -1,0 +1,108 @@
+Code authors
+============
+
+This program was written by the following people:
+ - Michele Bucelli (aka Buch) - game engine and content files
+ - Michele Guerri (aka Mikiguerri) - content files
+
+Assets attribution
+==================
+
+Assets were authored by the following people:
+
+ - Johannes Sjölund (aka wulax)
+     all files inside 'data/images/clothing' folder
+     data/images/units/baseMale_bow.png
+     data/images/units/baseMale_thrust.png
+     data/images/units/skeleton.png
+     data/images/units/skeleton_death.png
+     data/images/units/skeleton_slash.png
+     data/images/units/skeleton_spellcast.png
+     data/images/weapons/arrow.png
+     data/images/weapons/bow.png
+     data/images/weapons/bow_icon.png
+     data/images/weapons/dagger.png
+     data/images/weapons/spear.png
+     data/images/weapons/spear_icon.png
+     data/images/weapons/staff.png
+     data/images/weapons/staff_air.png
+     data/images/weapons/staff_air_icon.png
+     data/images/weapons/staff_earth.png
+     data/images/weapons/staff_earth_icon.png
+     data/images/weapons/staff_fire.png
+     data/images/weapons/staff_fire_icon.png
+     data/images/weapons/staff_water.png
+     data/images/weapons/staff_water_icon.png
+
+ - Lanea Zimmermann (aka Sharm)
+     data/images/deco/barrel.png
+     data/images/deco/building.png
+     data/images/deco/cementstair.png
+     data/images/deco/chests.png
+     data/images/deco/rock.png
+     data/images/deco/theLPC.png
+     data/images/deco/trees.png
+     data/images/tileset/brackish_water.png
+     data/images/tileset/bridges.png
+     data/images/tileset/cave.png
+     data/images/tileset/dirt.png
+     data/images/tileset/dirt_dark.png
+     data/images/tileset/dungeon.png
+     data/images/tileset/grass.png
+     data/images/tileset/hole.png
+     data/images/tileset/hole_dark.png
+     data/images/tileset/inside.png
+     data/images/tileset/lava.png
+     data/images/tileset/road.png
+     data/images/tileset/water.png
+
+ - Stephen Challener (aka Redshrike)
+     data/images/units/baseMale.png
+     data/images/units/baseMale_slash.png
+     data/images/units/baseMale_spellcast.png
+     data/images/units/baseMale_death.png
+
+ - Charles Sanchez (aka CharlesGabriel)
+     data/images/units/bat.png
+     data/images/units/bee.png
+     data/images/units/eyeball.png
+     data/images/units/slime.png
+     data/images/units/small_worm.png
+     data/images/units/snake.png
+     all files inside 'data/images/units/portraits' folder
+
+ - Casper Nilsson
+     data/images/deco/cherry_trees.png
+     data/images/deco/tree_stump.png
+
+ - Daniel Eddeland (aka daneeklu) (http://opengameart.org/content/lpc-farming-tilesets-magic-animations-and-ui-elements)
+     data/images/deco/fence.png
+     data/images/deco/plants.png
+     data/images/tileset/plowed_soil.png
+     data/images/tileset/sand.png
+     data/images/tileset/sand+water.png
+     data/images/tileset/tallgrass.png
+     data/images/tileset/wheat.png
+     data/images/tileset/young_wheat.png
+     data/images/weapons/greatspear.png
+     data/images/weapons/greatspear_icon.png
+     data/images/weapons/sword.png
+     data/images/weapons/trident.png
+
+ - Artur Reterski
+     data/images/deco/items.png
+
+ - Joshua Taylor
+     data/images/deco/vegies.png
+
+ - Michele Bucelli (aka Buch)
+     data/images/misc/effects.png
+     data/images/misc/title.png
+
+ - Juan Rodriguez (aka Nushio)
+     data/images/tileset/deepwater.png
+     data/images/tileset/snow.png
+     data/images/tileset/snow+water.png
+
+ - Thane Brimhall (aka Pennomi)
+     all files inside 'data/images/ui' folder
